@@ -1,0 +1,35 @@
+# File: .github/workflows/run_bot.yml
+name: Run Manga Translation Bot
+
+on:
+  # يتيح لك تشغيل البوت يدوياً بضغطة زر من واجهة جيت هاب
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # 360 دقيقة = 6 ساعات بالضبط
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install python-telegram-bot pydantic pydantic-settings aiohttp
+
+      - name: Run Bot
+        env:
+          # سيتم سحب هذه القيم من أسرار المستودع (Secrets)
+          MANGA_BOT_TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          MANGA_BOT_AI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MANGA_BOT_AI_PROVIDER: 'gemini'
+          MANGA_BOT_POST_JOB_DELAY_SECONDS: '10'
+        run: |
+          python main.py
