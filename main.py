@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import List
+from typing import List, Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -88,18 +88,43 @@ def create_sending_step(app: Application):
 
 
 # --- Telegram Bot Handlers ---
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles incoming photos, creates a PageJob, and submits it to the queue."""
+async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handles incoming images whether sent as compressed photos or uncompressed files.
+    Creates a PageJob and submits it to the queue.
+    """
     user = update.effective_user
     chat_id = update.effective_chat.id
+    image_bytes: Optional[bytes] = None
     
-    if not update.message.photo:
-        await context.bot.send_message(chat_id=chat_id, text="الرجاء إرسال صورة صفحة المانهوا.")
-        return
+    # 1. Check if the image was sent as a standard Photo (Compressed)
+    if update.message.photo:
+        photo_file = await update.message.photo[-1].get_file()
+        image_bytes = await photo_file.download_as_bytearray()
         
-    photo_file = await update.message.photo[-1].get_file()
-    image_bytes = await photo_file.download_as_bytearray()
+    # 2. Check if the image was sent as a Document/File (Uncompressed)
+    elif update.message.document:
+        # Verify that the file is actually an image
+        mime_type = update.message.document.mime_type
+        if mime_type and mime_type.startswith('image/'):
+            doc_file = await update.message.document.get_file()
+            image_bytes = await doc_file.download_as_bytearray()
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id, 
+                text="⚠️ الملف المرسل ليس صورة. الرجاء إرسال ملفات الصور فقط (JPG, PNG, WEBP)."
+            )
+            return
+
+    # 3. If neither, reject
+    if not image_bytes:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="الرجاء إرسال صورة صفحة المانهوا مباشرة أو كملف."
+        )
+        return
     
+    # Create the Job
     job = PageJob(
         user_id=user.id if user else chat_id,
         chat_id=chat_id,
@@ -187,7 +212,9 @@ def main() -> None:
     # Register handlers
     app.add_handler(CommandHandler("settings", settings_command))
     app.add_handler(CallbackQueryHandler(settings_callback, pattern="^set_persona_"))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    
+    # Updated filter to catch BOTH Photos and Image Documents
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_image))
 
     logger.info("Starting Manga Translation Bot with Dynamic Personas...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
