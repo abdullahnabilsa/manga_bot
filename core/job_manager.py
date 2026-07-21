@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Callable, Awaitable, Dict, Optional
 from uuid import UUID
 
 from core.queue_manager import AsyncSingleWorkerQueue
 from utils.logger import job_logger
 from models.page_job import PageJob, JobState
+
+logger = logging.getLogger(__name__)
 
 
 class JobManager:
@@ -96,7 +99,7 @@ class JobManager:
 
                 await self._transition_state(job, JobState.FINISHED)
                 
-                                # Calculate metrics
+                # Calculate metrics based on the new PageData structure
                 scene_count = len(job.page_data.scenes) if job.page_data else 0
                 element_count = sum(len(s.elements) for s in job.page_data.scenes) if job.page_data else 0
                 
