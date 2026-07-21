@@ -96,9 +96,9 @@ class JobManager:
 
                 await self._transition_state(job, JobState.FINISHED)
                 
-                # Calculate metrics
-                scene_count = 1 if job.scene else 0
-                element_count = len(job.scene.elements) if job.scene else 0
+                                # Calculate metrics
+                scene_count = len(job.page_data.scenes) if job.page_data else 0
+                element_count = sum(len(s.elements) for s in job.page_data.scenes) if job.page_data else 0
                 
                 job_logger.log_completed(job_id, scene_count, element_count)
 

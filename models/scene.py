@@ -1,7 +1,7 @@
 # File: models/scene.py
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -9,17 +9,13 @@ from models.element import Element
 
 
 class Scene(BaseModel):
-    """
-    An ordered collection of Element objects representing one full page.
-    Ordering MUST follow Arabic reading convention: Top-to-Bottom, Right-to-Left.
-    """
+    """A logical grouping of elements on a page."""
 
     model_config = ConfigDict(
         extra="forbid",
         validate_assignment=True,
     )
 
-    elements: List[Element] = Field(
-        default_factory=list,
-        description="Elements in Arabic reading order (RTL, top-to-bottom).",
-    )
+    scene_number: Optional[int] = Field(default=None, description="Sequential scene number on the page.")
+    environment: Optional[str] = Field(default=None, description="Description of the scene/setting.")
+    elements: List[Element] = Field(default_factory=list, description="Elements within this scene.")

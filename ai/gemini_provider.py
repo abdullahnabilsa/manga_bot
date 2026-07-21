@@ -22,13 +22,13 @@ class GeminiProvider(BaseAIProvider):
     Accepts a dynamic prompt (persona) for each request.
     """
 
-    # Updated 5-model fallback chain (using latest stable endpoints)
+    # Updated 5-model fallback chain (using the exact official GA/Preview names provided)
     FALLBACK_MODELS: List[str] = [
-        "gemini-1.5-flash-latest",       # Fastest & most stable
-        "gemini-1.5-pro-latest",         # Higher quality, fallback
-        "gemini-1.5-flash-8b-latest",    # Very lightweight fallback
-        "gemini-1.0-pro-vision-latest",  # Older vision model fallback
-        "gemini-pro-vision",             # Legacy fallback
+        "gemini-3.1-flash-lite",      # ✅ مستقر (GA) - أولوية أولى
+        "gemini-3.5-flash",           # ✅ مستقر (GA) - أقوى
+        "gemini-3-flash-preview",     # ✅ معاينة - بديل
+        "gemini-2.5-flash",           # ✅ مستقر - بديل
+        "gemini-2.5-flash-lite",      # ✅ مستقر - بديل أخير
     ]
 
     MAX_RETRIES_PER_MODEL = 2
