@@ -9,7 +9,6 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from models.page_job import JobState, PageJob
-from utils.markdown_escaper import escape_markdown_v2
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +17,6 @@ class TelegramRenderer:
     """
     Independent rendering component responsible for sending paginated strings
     to Telegram as professional MarkdownV2 cards.
-    
     Enforces a strict 300ms rate limit between sends and handles state updates.
     """
 
@@ -31,13 +29,7 @@ class TelegramRenderer:
         messages: List[str]
     ) -> None:
         """
-        Takes a list of pre-paginated strings, formats them as MarkdownV2 cards,
-        and sends them sequentially to the user's chat.
-        
-        Args:
-            context: The Telegram Context object providing bot API access.
-            job: The PageJob object containing chat_id, job_id, and state.
-            messages: The list of raw strings to be sent.
+        Takes a list of pre-formatted MarkdownV2 strings and sends them sequentially.
         """
         if not messages:
             logger.warning(f"JobID={job.job_id} | No messages to render.")
@@ -52,28 +44,18 @@ class TelegramRenderer:
         
         for i, raw_text in enumerate(messages, start=1):
             try:
-                # 1. Escape raw text for strict MarkdownV2 parsing
-                escaped_text = escape_markdown_v2(raw_text)
-                
-                # 2. Format as a professional Telegram Card using Blockquote
-                # Wrapping the entire message in a blockquote creates a distinct visual card
-                card_lines = []
-                for line in escaped_text.split("\n"):
-                    card_lines.append(f"> {line}" if line else ">")
-                card_text = "\n".join(card_lines)
-                
-                # 3. Send the message
+                # Send the message exactly as formatted by MessageBuilder
                 await context.bot.send_message(
                     chat_id=job.chat_id,
-                    text=card_text,
+                    text=raw_text,
                     parse_mode=ParseMode.MARKDOWN_V2,
-                    disable_web_page_preview=True
+                    disable_web_page_preview=True  # Enforced by Spec
                 )
                 logger.info(
                     f"JobID={job.job_id} | Successfully sent message {i}/{total_messages}."
                 )
                 
-                # 4. Apply Rate Limiter (300ms) if not the last message
+                # Apply Rate Limiter (300ms) if not the last message
                 if i < total_messages:
                     await asyncio.sleep(self.SEND_DELAY_SECONDS)
                     
@@ -83,8 +65,6 @@ class TelegramRenderer:
                     f"JobID={job.job_id} | Failed to send message {i}/{total_messages}: {str(e)}",
                     exc_info=True
                 )
-                # Even if this message failed, wait 300ms before attempting the next
-                # to respect rate limits and avoid rapid-fire error loops.
                 if i < total_messages:
                     await asyncio.sleep(self.SEND_DELAY_SECONDS)
 
