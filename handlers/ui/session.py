@@ -63,33 +63,28 @@ async def receive_session_filename(update: Update, context: ContextTypes.DEFAULT
     
     await batch_manager.set_custom_filename(user_id, clean_filename)
     
+    # مسح رسالة المستخدم التي تحتوي على الاسم للحفاظ على نظافة الشات
+    try:
+        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
+    except Exception:
+        pass
+    
     queue_size = await queue_manager.size()
     
     if queue_size > 0:
         # الطابور مليء: تفعيل التجميع المؤجل
         await batch_manager.set_pending_compile(user_id)
-        tracker_id = await batch_manager.get_tracker(user_id)
         msg_text = f"⏳ *تم تسجيل اسم الملف:* `{escaped_filename}`\nلا تزال لديك صور قيد المعالجة\\. سيقوم البوت بتجميع الملف وإرساله فور اكتمالها\\."
         
-        try:
-            if tracker_id:
-                await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=tracker_id, text=msg_text, parse_mode=ParseMode.MARKDOWN_V2)
-            else:
-                await update.message.reply_text(msg_text, parse_mode=ParseMode.MARKDOWN_V2)
-        except Exception:
-            await update.message.reply_text(msg_text, parse_mode=ParseMode.MARKDOWN_V2)
+        # إرسال كرسالة جديدة بدلاً من تعديل رسالة الإحصائيات
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=msg_text, parse_mode=ParseMode.MARKDOWN_V2)
         return
 
     # الطابور فارغ: التجميع الفوري
-    tracker_id = await batch_manager.get_tracker(user_id)
     msg_text = f"⏳ *جاري تجميع الترجمة بإسم:* `{escaped_filename}`\\.\\.\\."
-    try:
-        if tracker_id:
-            await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=tracker_id, text=msg_text, parse_mode=ParseMode.MARKDOWN_V2)
-        else:
-            await update.message.reply_text(msg_text, parse_mode=ParseMode.MARKDOWN_V2)
-    except Exception:
-        await update.message.reply_text(msg_text, parse_mode=ParseMode.MARKDOWN_V2)
+    
+    # إرسال كرسالة جديدة بدلاً من تعديل رسالة الإحصائيات
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=msg_text, parse_mode=ParseMode.MARKDOWN_V2)
         
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_DOCUMENT)
     
