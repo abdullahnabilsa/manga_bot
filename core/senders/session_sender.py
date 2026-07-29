@@ -123,7 +123,13 @@ class SessionSender:
                     
             await self.bot.send_message(chat_id=chat_id, text="✅ *اكتملت الجلسة\\!*\nتم تجهيز الملفات وإرسالها بنجاح\\.", parse_mode=ParseMode.MARKDOWN_V2)
             
-            # ترك رسالة المتابعة (Tracker) كأرشيف للمستخدم كما هو مخطط له في الـ UX
+            # حذف رسالة طلب الاسم بعد نجاح التجميع وإرسال الملفات
+            prompt_msg_id = await self.batch_manager.get_prompt_message_id(user_id)
+            if prompt_msg_id:
+                try:
+                    await self.bot.delete_message(chat_id=chat_id, message_id=prompt_msg_id)
+                except Exception as e:
+                    logger.warning(f"Failed to delete prompt message: {e}")
                 
         except Exception as e:
             logger.error(f"Failed to process deferred compile: {e}")

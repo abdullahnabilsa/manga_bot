@@ -48,7 +48,10 @@ async def end_session_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         "يرجى إرسال الاسم الذي تريد حفظ ملف الترجمة به الآن\\.\n\n"
         "_ملاحظة: سيتم تنظيف الاسم تلقائياً من الرموز غير المسموحة_"
     )
-    await update.message.reply_text(text=text, parse_mode=ParseMode.MARKDOWN_V2)
+    
+    # إرسال الرسالة وحفظ الـ message_id الخاص بها
+    prompt_msg = await update.message.reply_text(text=text, parse_mode=ParseMode.MARKDOWN_V2)
+    await batch_manager.set_prompt_message_id(user_id, prompt_msg.message_id)
 
 async def receive_session_filename(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     batch_manager = context.bot_data["batch_manager"]

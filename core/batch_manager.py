@@ -16,7 +16,8 @@ class BatchManager:
         self._session_personas: Dict[int, str] = {}
         self._session_trackers: Dict[int, int] = {}
         self._queued_files: Dict[int, List[str]] = {}
-        self._custom_filenames: Dict[int, str] = {}  # <--- جديد: أسماء الملفات المخصصة
+        self._custom_filenames: Dict[int, str] = {}
+        self._prompt_message_ids: Dict[int, int] = {}  # <--- جديد: تتبع رسالة طلب الاسم
         self._lock = asyncio.Lock()
 
     def _cleanup_stale_sessions(self) -> None:
@@ -31,7 +32,8 @@ class BatchManager:
             self._session_personas.pop(user_id, None)
             self._session_trackers.pop(user_id, None)
             self._queued_files.pop(user_id, None)
-            self._custom_filenames.pop(user_id, None) # تنظيف القائمة
+            self._custom_filenames.pop(user_id, None)
+            self._prompt_message_ids.pop(user_id, None) # تنظيف القائمة
 
     async def start_session(self, user_id: int, persona_name: str) -> None:
         async with self._lock:
@@ -40,7 +42,8 @@ class BatchManager:
                 self._sessions[user_id] = ([], time.time())
                 self._session_personas[user_id] = persona_name
                 self._queued_files[user_id] = []
-                self._custom_filenames[user_id] = "" # تهيئة فارغة
+                self._custom_filenames[user_id] = ""
+                self._prompt_message_ids[user_id] = None # تهيئة فارغة
 
     async def get_session_persona(self, user_id: int) -> Optional[str]:
         async with self._lock:
@@ -76,7 +79,8 @@ class BatchManager:
             self._session_personas.pop(user_id, None)
             self._session_trackers.pop(user_id, None)
             self._queued_files.pop(user_id, None)
-            self._custom_filenames.pop(user_id, None) # تنظيف القائمة
+            self._custom_filenames.pop(user_id, None)
+            self._prompt_message_ids.pop(user_id, None) # تنظيف القائمة
 
     async def set_pending_compile(self, user_id: int) -> None:
         async with self._lock:
@@ -127,3 +131,12 @@ class BatchManager:
         async with self._lock:
             self._cleanup_stale_sessions()
             return self._custom_filenames.get(user_id)
+
+    # --- دوال رسالة طلب الاسم ---
+    async def set_prompt_message_id(self, user_id: int, message_id: int) -> None:
+        async with self._lock:
+            self._prompt_message_ids[user_id] = message_id
+
+    async def get_prompt_message_id(self, user_id: int) -> Optional[int]:
+        async with self._lock:
+            return self._prompt_message_ids.get(user_id)
