@@ -105,6 +105,15 @@ async def post_init(app: Application) -> None:
         except Exception as e:
             logger.warning(f"Could not set admin commands for {admin_id}: {e}")
     
+    # إنشاء كائن البوت بايبلاين أولاً
+    pipeline = BotPipeline(
+        bot=bot, settings_manager=settings_manager, batch_manager=batch_manager, 
+        persona_registry=persona_registry, ai_provider=ai_provider, 
+        telegram_renderer=telegram_renderer, api_key_manager=api_key_manager,
+        queue_manager=queue_manager
+    )
+    
+    # ثم تعيينه في bot_data ليكون متاحاً في الجلسات
     app.bot_data["job_manager"] = job_manager
     app.bot_data["queue_manager"] = queue_manager
     app.bot_data["settings_manager"] = settings_manager
@@ -112,15 +121,8 @@ async def post_init(app: Application) -> None:
     app.bot_data["persona_registry"] = persona_registry
     app.bot_data["api_key_manager"] = api_key_manager
     app.bot_data["access_manager"] = access_manager
-    app.bot_data["pipeline"] = pipeline  # <--- تمت إضافته هنا ليتوفر دائماً في الجلسة
+    app.bot_data["pipeline"] = pipeline
 
-    pipeline = BotPipeline(
-        bot=bot, settings_manager=settings_manager, batch_manager=batch_manager, 
-        persona_registry=persona_registry, ai_provider=ai_provider, 
-        telegram_renderer=telegram_renderer, api_key_manager=api_key_manager,
-        queue_manager=queue_manager 
-    )
-    app.bot_data["pipeline"] = pipeline  # تحديث المرجع بالكائن المبني
     await pipeline.register(job_manager)
     await job_manager.start()
 
