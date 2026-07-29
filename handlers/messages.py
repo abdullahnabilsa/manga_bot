@@ -29,7 +29,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     is_session_active = await batch_manager.is_session_active(user.id)
     queue_size_before = await queue_manager.size()
     
-    # --- إرسال رسالة المتابعة فوراً قبل التحميل والترجمة (استجابة فورية) ---
+    # --- إرسال رسالة التحليل فوراً قبل التحميل والترجمة (استجابة فورية) ---
     if is_session_active:
         tracker_id = await batch_manager.get_tracker(user.id)
         current_queue = queue_size_before + 1
@@ -45,7 +45,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             
         if not tracker_id:
             text = (
-                f"⏳ *تم استلام الصور وجاري بدء المعالجة...*\n\n"
+                f"⏳ *جاري التحليل...*\n\n"
                 f"📊 *إحصائيات الجلسة الحالية:*\n"
                 f"• الصور المترجمة: `{translated_count}`\n"
                 f"• الصور في الطابور: `{current_queue}`\n\n"
