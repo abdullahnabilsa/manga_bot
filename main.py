@@ -78,6 +78,43 @@ async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     raise ApplicationHandlerStop
 
+async def session_guard_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    حارس الجلسة: يمنع استقبال أي رسائل أو أوامر أثناء الجلسة، 
+    باستثناء الصور وزر إنهاء الجلسة، ورسالة إدخال اسم الملف.
+    """
+    user_id = update.effective_user.id
+    if not await batch_manager.is_session_active(user_id): return
+
+    # السماح لإدخال اسم الملف
+    if context.user_data.get('awaiting_session_filename'): return
+
+    # السماح بأزرار الإدارة (للسوبر أدمن فقط) في حالات الطوارئ
+    if update.callback_query and update.callback_query.data.startswith(("accept_req", "reject_req")):
+        return
+
+    # منع أزرار الإعدادات والقوائم تماماً أثناء الجلسة
+    if update.callback_query:
+        await update.callback_query.answer("🚫 معطل أثناء الجلسة. اضغط 🔴 إنهاء الجلسة للخروج.", show_alert=True)
+        raise ApplicationHandlerStop
+
+    # السماح بالصور
+    if update.message and (update.message.photo or (update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('image/'))):
+        return
+
+    # السماح بإنهاء الجلسة
+    if update.message and update.message.text in ["/end_session", "🔴 إنهاء الجلسة"]:
+        return
+
+    # حذف أي رسالة أخرى فوراً (نصوص، ملصقات، أوامر أخرى)
+    if update.message:
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+    raise ApplicationHandlerStop
+
 async def post_init(app: Application) -> None:
     bot = app.bot
     
@@ -105,7 +142,6 @@ async def post_init(app: Application) -> None:
         except Exception as e:
             logger.warning(f"Could not set admin commands for {admin_id}: {e}")
     
-    # إنشاء كائن البوت بايبلاين أولاً
     pipeline = BotPipeline(
         bot=bot, settings_manager=settings_manager, batch_manager=batch_manager, 
         persona_registry=persona_registry, ai_provider=ai_provider, 
@@ -113,7 +149,6 @@ async def post_init(app: Application) -> None:
         queue_manager=queue_manager
     )
     
-    # ثم تعيينه في bot_data ليكون متاحاً في الجلسات
     app.bot_data["job_manager"] = job_manager
     app.bot_data["queue_manager"] = queue_manager
     app.bot_data["settings_manager"] = settings_manager
@@ -132,7 +167,9 @@ async def post_shutdown(app: Application) -> None:
 def main() -> None:
     app = ApplicationBuilder().token(settings.telegram_bot_token).post_init(post_init).post_shutdown(post_shutdown).build()
 
-    app.add_handler(TypeHandler(Update, firewall_middleware), group=-1)
+    # الـ Middlewares (حراس البوابات)
+    app.add_handler(TypeHandler(Update, firewall_middleware), group=-2)
+    app.add_handler(TypeHandler(Update, session_guard_middleware), group=-1)
     
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))

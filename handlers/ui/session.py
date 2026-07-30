@@ -14,7 +14,6 @@ async def start_session_command(update: Update, context: ContextTypes.DEFAULT_TY
     settings_manager = context.bot_data["settings_manager"]
     user_id = update.effective_user.id
     
-    # مسح أي حالات انتظار سابقة لمسح أي لبس
     context.user_data['awaiting_session_filename'] = False
     
     persona_name = await settings_manager.get_persona(user_id)
@@ -22,9 +21,11 @@ async def start_session_command(update: Update, context: ContextTypes.DEFAULT_TY
     await batch_manager.start_session(user_id, persona_name)
     
     text = (
-        "🎬 *تم تفعيل الجلسة بنجاح\\!*\n\n"
-        "يمكنك الآن إرسال صور صفحات المانغا\\. سأقوم بمعالجتها وتخزينها في الذاكرة\\.\n\n"
-        "⚠️ *مهم:* عند انتهائك، اضغط *🔴 إنهاء الجلسة* لتسمية الملف وتجميعه\\."
+        "🎬 *تم تفعيل وضع الجلسة بنجاح\\!*\n\n"
+        "في هذا الوضع، تم تفعيل *الحماية القصوى* لمنع التشتت:\n"
+        "• سيتم قبول *صور المانغا فقط*\\.\n"
+        "• سيتم *حذف* أي رسالة نصية، ملصق، أو أمر \\(مثل الإعدادات\\) فوراً\\.\n\n"
+        "⚠️ *للخروج من هذا الوضع وتجميع الملفات:* اضغط زر *🔴 إنهاء الجلسة*\\."
     )
     await update.message.reply_text(text=text, parse_mode=ParseMode.MARKDOWN_V2)
 
@@ -43,7 +44,6 @@ async def end_session_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await batch_manager.clear_session(user_id)
         return
 
-    # تفعيل وضع انتظار اسم الملف
     context.user_data['awaiting_session_filename'] = True
     
     text = (
@@ -52,7 +52,6 @@ async def end_session_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         "_ملاحظة: سيتم تنظيف الاسم تلقائياً من الرموز غير المسموحة_"
     )
     
-    # إرسال الرسالة وحفظ الـ message_id الخاص بها
     prompt_msg = await update.message.reply_text(text=text, parse_mode=ParseMode.MARKDOWN_V2)
     await batch_manager.set_prompt_message_id(user_id, prompt_msg.message_id)
 
@@ -69,7 +68,6 @@ async def receive_session_filename(update: Update, context: ContextTypes.DEFAULT
     
     await batch_manager.set_custom_filename(user_id, clean_filename)
     
-    # مسح رسالة المستخدم التي تحتوي على الاسم للحفاظ على نظافة الشات
     try:
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
     except Exception:
@@ -78,22 +76,15 @@ async def receive_session_filename(update: Update, context: ContextTypes.DEFAULT
     queue_size = await queue_manager.size()
     
     if queue_size > 0:
-        # الطابور مليء: تفعيل التجميع المؤجل
         await batch_manager.set_pending_compile(user_id)
         msg_text = f"⏳ *تم تسجيل اسم الملف:* `{escaped_filename}`\nلا تزال لديك صور قيد المعالجة\\. سيقوم البوت بتجميع الملف وإرساله فور اكتمالها\\."
-        
-        # إرسال كرسالة جديدة بدلاً من تعديل رسالة الإحصائيات
         await context.bot.send_message(chat_id=update.effective_chat.id, text=msg_text, parse_mode=ParseMode.MARKDOWN_V2)
         return
 
-    # الطابور فارغ: التجميع الفوري
     msg_text = f"⏳ *جاري تجميع الترجمة بإسم:* `{escaped_filename}`\\.\\.\\."
-    
-    # إرسال كرسالة جديدة بدلاً من تعديل رسالة الإحصائيات
     await context.bot.send_message(chat_id=update.effective_chat.id, text=msg_text, parse_mode=ParseMode.MARKDOWN_V2)
         
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_DOCUMENT)
     
-    # استدعاء محرك التجميع الموحد في SessionSender
     session_sender = context.bot_data["pipeline"].session_sender
     await session_sender.compile_and_send(user_id, update.effective_chat.id)
