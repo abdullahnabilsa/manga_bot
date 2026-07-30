@@ -22,6 +22,15 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     
     user = update.effective_user
     chat_id = update.effective_chat.id
+    
+    # --- الحصار الأمني: رفض الصور أثناء التجميع النهائي ---
+    if await batch_manager.is_finalizing(user.id):
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        return  # تجاهل الصورة بصمت تام
+
     image_file_id: Optional[str] = None
     file_name: Optional[str] = None
     
@@ -56,7 +65,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         photo_message_id=update.message.message_id
     )
     
-    # --- إدارة الضغط الخلفي (Backpressure Handling) ---
     submission_result = await job_manager.submit_job(job)
     
     if submission_result == JobSubmissionResult.QUEUE_FULL:
@@ -75,7 +83,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
-    # إذا نجح الإدخال، نتابع المنطق العادي
     if is_session_active:
         tracker_id = await batch_manager.get_tracker(user.id)
         current_queue = await queue_manager.size()
@@ -113,18 +120,15 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await context.bot.edit_message_text(chat_id=chat_id, message_id=tracker_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
             except Exception: pass 
     else:
-        # وضع الترجمة المباشرة (Direct Mode)
         user_settings = await settings_manager.get_user_settings(user.id)
         output_method = user_settings.get("output_method", "files_only")
         if output_method == "chat_and_files": output_method = "messages_and_files"
         
         if output_method == "messages_only":
-            # تسليم صامت تام للنصوص
             try:
                 await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
             except Exception: pass
         else:
-            # ملفات
             if queue_size_before == 0:
                 direct_msg_id = context.user_data.get('direct_status_msg_id')
                 if direct_msg_id:

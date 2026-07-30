@@ -9,7 +9,7 @@ from typing import List
 from PIL import Image
 from telegram import InputFile
 from telegram.constants import ParseMode, ChatAction
-from telegram.error import RetryAfter
+from telegram.error import RetryAfter, BadRequest
 
 from config.settings import Settings
 from core.job_manager import JobManager
@@ -78,22 +78,22 @@ class BotPipeline:
         self.session_sender = SessionSender(self)
 
     async def safe_edit_or_send(self, job: PageJob, text: str) -> None:
+        """تعدل الرسالة، وإذا فشل التعديل (لأنها حُذفت)، ينشئ رسالة جديدة ويربطها بالـ Job."""
         try:
             if job.status_message_id:
                 await self.bot.edit_message_text(chat_id=job.chat_id, message_id=job.status_message_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
             else:
+                raise BadRequest("No status message ID")  # إجبار الإنشاء الجديد
+        except (RetryAfter, BadRequest, Exception) as e:
+            if isinstance(e, RetryAfter):
+                await asyncio.sleep(e.retry_after)
+            
+            # محاولة إنشاء رسالة جديدة إذا فشل التعديل
+            try:
                 msg = await self.bot.send_message(chat_id=job.chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
                 job.status_message_id = msg.message_id
-        except RetryAfter as e:
-            await asyncio.sleep(e.retry_after)
-            try:
-                if job.status_message_id:
-                    await self.bot.edit_message_text(chat_id=job.chat_id, message_id=job.status_message_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-                else:
-                    msg = await self.bot.send_message(chat_id=job.chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-                    job.status_message_id = msg.message_id
-            except Exception: pass
-        except Exception: pass
+            except Exception:
+                pass
 
     async def safe_delete_message(self, job: PageJob) -> None:
         if not job.status_message_id: return
@@ -150,7 +150,6 @@ class BotPipeline:
         handler = self.persona_registry.get_handler(persona_name)
         prompt_text = handler.prompt
         
-        # --- تم تصحيح الخطأ هنا بإضافة await ---
         api_keys = await self.api_key_manager.get_keys_for_user(job.user_id)
         if not api_keys:
             env_key = self._settings.ai_api_key

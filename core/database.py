@@ -8,12 +8,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 class Database:
-    """Asynchronous SQLite database wrapper with Persistent Connection, WAL mode, and Locking."""
+    """Asynchronous SQLite database wrapper with Persistent Connection and WAL mode."""
     
     def __init__(self, db_path: str = "manga_bot.db"):
         self.db_path = db_path
         self._conn: aiosqlite.Connection | None = None
-        self._lock = asyncio.Lock()  # <--- حماية الاتصال من التضارب
+        self._write_lock = asyncio.Lock()  # قفل عمليات الكتابة فقط لمنع التضارب
 
     async def connect(self) -> None:
         """Establish a persistent database connection and optimize settings."""
@@ -61,16 +61,16 @@ class Database:
         await self._conn.commit()
 
     async def execute(self, query: str, params: tuple = ()) -> None:
-        async with self._lock:
+        # قفل الكتابة لضمان سلامة البيانات (Thread Safety)
+        async with self._write_lock:
             await self._conn.execute(query, params)
             await self._conn.commit()
 
     async def fetchone(self, query: str, params: tuple = ()):
-        async with self._lock:
-            async with self._conn.execute(query, params) as cursor:
-                return await cursor.fetchone()
+        # لا حاجة للقفل في القراءة، وضع WAL يسمح بقراءات متزامنة لا نهائية
+        async with self._conn.execute(query, params) as cursor:
+            return await cursor.fetchone()
 
     async def fetchall(self, query: str, params: tuple = ()):
-        async with self._lock:
-            async with self._conn.execute(query, params) as cursor:
-                return await cursor.fetchall()
+        async with self._conn.execute(query, params) as cursor:
+            return await cursor.fetchall()

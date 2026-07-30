@@ -17,7 +17,8 @@ class BatchManager:
         self._session_trackers: Dict[int, int] = {}
         self._queued_files: Dict[int, List[str]] = {}
         self._custom_filenames: Dict[int, str] = {}
-        self._prompt_message_ids: Dict[int, int] = {}  # تتبع رسالة طلب الاسم
+        self._prompt_message_ids: Dict[int, int] = {}
+        self._finalizing_users: Set[int] = set()  # <--- جديد: مستخدمون في مرحلة التجميع النهائي
         self._lock = asyncio.Lock()
 
     def _cleanup_stale_sessions(self) -> None:
@@ -34,6 +35,7 @@ class BatchManager:
             self._queued_files.pop(user_id, None)
             self._custom_filenames.pop(user_id, None)
             self._prompt_message_ids.pop(user_id, None)
+            self._finalizing_users.discard(user_id)  # تنظيف الحالة
 
     async def start_session(self, user_id: int, persona_name: str) -> None:
         async with self._lock:
@@ -44,6 +46,7 @@ class BatchManager:
                 self._queued_files[user_id] = []
                 self._custom_filenames[user_id] = ""
                 self._prompt_message_ids[user_id] = None
+            self._finalizing_users.discard(user_id)  # إعادة فتح صمام الاستقبال
 
     async def get_session_persona(self, user_id: int) -> Optional[str]:
         async with self._lock:
@@ -81,6 +84,7 @@ class BatchManager:
             self._queued_files.pop(user_id, None)
             self._custom_filenames.pop(user_id, None)
             self._prompt_message_ids.pop(user_id, None)
+            self._finalizing_users.discard(user_id)  # إعادة فتح صمام الاستقبال
 
     async def set_pending_compile(self, user_id: int) -> None:
         async with self._lock:
@@ -137,3 +141,15 @@ class BatchManager:
     async def get_prompt_message_id(self, user_id: int) -> Optional[int]:
         async with self._lock:
             return self._prompt_message_ids.get(user_id)
+
+    # --- دوال حالة التجميع النهائي (Finalizing) ---
+    async def set_finalizing(self, user_id: int, status: bool) -> None:
+        async with self._lock:
+            if status:
+                self._finalizing_users.add(user_id)
+            else:
+                self._finalizing_users.discard(user_id)
+
+    async def is_finalizing(self, user_id: int) -> bool:
+        async with self._lock:
+            return user_id in self._finalizing_users

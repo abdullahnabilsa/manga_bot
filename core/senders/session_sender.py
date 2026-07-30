@@ -30,7 +30,6 @@ class SessionSender:
         
         await self._update_session_tracker(job, total_pages, queue_size, is_pending)
         
-        # إذا كان التجميع مؤجلاً والطابور أصبح فارغاً، نبدأ التجميع النهائي
         if is_pending and queue_size == 0:
             logger.info(f"JobID={job.job_id} | Queue empty, triggering deferred compile.")
             await self.compile_and_send(job.user_id, job.chat_id)
@@ -87,7 +86,6 @@ class SessionSender:
         if not session_data:
             return
 
-        # جلب اسم الملف المخصص أو الافتراضي
         custom_name = await self.batch_manager.get_custom_filename(user_id)
         base_filename = custom_name if custom_name else "manga_session"
         
@@ -123,7 +121,6 @@ class SessionSender:
                     
             await self.bot.send_message(chat_id=chat_id, text="✅ *اكتملت الجلسة\\!*\nتم تجهيز الملفات وإرسالها بنجاح\\.", parse_mode=ParseMode.MARKDOWN_V2)
             
-            # حذف رسالة طلب الاسم بعد نجاح التجميع وإرسال الملفات
             prompt_msg_id = await self.batch_manager.get_prompt_message_id(user_id)
             if prompt_msg_id:
                 try:
@@ -137,3 +134,4 @@ class SessionSender:
             
         await self.batch_manager.clear_session(user_id)
         await self.batch_manager.clear_pending_compile(user_id)
+        await self.batch_manager.set_finalizing(user_id, False)  # <--- إعادة فتح صمام الاستقبال بعد التجميع

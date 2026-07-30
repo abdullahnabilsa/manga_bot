@@ -15,6 +15,7 @@ async def start_session_command(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
     
     context.user_data['awaiting_session_filename'] = False
+    await batch_manager.set_finalizing(user_id, False)  # <--- إعادة فتح الاستقبال
     
     persona_name = await settings_manager.get_persona(user_id)
     if not persona_name: persona_name = "Default Translator"
@@ -44,12 +45,15 @@ async def end_session_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await batch_manager.clear_session(user_id)
         return
 
+    # --- إغلاق صمام الاستقبال فوراً ---
+    await batch_manager.set_finalizing(user_id, True)
+    
     context.user_data['awaiting_session_filename'] = True
     
     text = (
         "📝 *تسمية ملف الترجمة*\n\n"
         "يرجى إرسال الاسم الذي تريد حفظ ملف الترجمة به الآن\\.\n\n"
-        "_ملاحظة: سيتم تنظيف الاسم تلقائياً من الرموز غير المسموحة_"
+        "_ملاحظة: تم إيقاف استقبال الصور حتى نهاية التجميع._"
     )
     
     prompt_msg = await update.message.reply_text(text=text, parse_mode=ParseMode.MARKDOWN_V2)
