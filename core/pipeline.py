@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 from typing import List
 
+from PIL import Image
 from telegram import InputFile
 from telegram.constants import ParseMode, ChatAction
 from telegram.error import RetryAfter
@@ -27,7 +29,6 @@ class BotErrorNotifier:
         self._bot = bot
 
     async def notify(self, job: PageJob, error_msg: str) -> None:
-        # توحيد الأخطاء: تعديل رسالة الحالة الحالية أو إرسال واحدة جديدة فقط
         text = f"❌ *فشلت المعالجة*\n🖼️ الملف: `{escape_markdown_v2(job.file_name)}`\n⚠️ لم يتمكن النظام من ترجمة هذه الصفحة\\.\n_يرجى المحاولة مرة أخرى لاحقاً._"
         try:
             if job.status_message_id:
@@ -92,10 +93,34 @@ class BotPipeline:
             except Exception: pass
         except Exception: pass
 
+    def _optimize_image(self, image_bytes: bytes) -> bytes:
+        """ضغط وتصغير الصورة لتسريع النقل وتقليل استهلاك الرام."""
+        try:
+            img = Image.open(io.BytesIO(image_bytes))
+            
+            # تحويل الصورة إلى RGB إذا كانت تحتوي على قناة شفافية (RGBA) أو متجه ألوان (P)
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+                
+            # تصغير الصورة إذا تجاوزت 1280 بكسل (كافٍ جداً للذكاء الاصطناعي)
+            max_size = 1280
+            if max(img.width, img.height) > max_size:
+                ratio = max_size / max(img.width, img.height)
+                new_size = (int(img.width * ratio), int(img.height * ratio))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+                
+            # حفظ الصورة بصيغة JPEG بجودة 85%
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=85, optimize=True)
+            return buffer.getvalue()
+            
+        except Exception as e:
+            logger.warning(f"Image optimization failed, using original: {e}")
+            return image_bytes
+
     async def processing_step(self, job: PageJob) -> PageJob:
         await self.bot.send_chat_action(chat_id=job.chat_id, action=ChatAction.TYPING)
         
-        # تعديل رسالة الحالة إلى "التحليل" مرة واحدة فقط إن وجدت
         is_session_active = await self.batch_manager.is_session_active(job.user_id)
         if not is_session_active and job.status_message_id:
             text = f"🔍 *جاري التحليل\\.*\n🖼️ الملف: `{escape_markdown_v2(job.file_name)}`\n⏳ _الذكاء الاصطناعي يقرأ الصورة..._"
@@ -103,7 +128,6 @@ class BotPipeline:
                 await self.bot.edit_message_text(chat_id=job.chat_id, message_id=job.status_message_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
             except Exception: pass
 
-        # --- تحميل الصورة الفعلي هنا (أثناء المعالجة) ---
         if not job.image_bytes and job.image_file_id:
             try:
                 tg_file = await self.bot.get_file(job.image_file_id)
@@ -111,6 +135,10 @@ class BotPipeline:
             except Exception as e:
                 logger.error(f"JobID={job.job_id} | Failed to download image: {e}")
                 raise RuntimeError(f"Failed to download image file: {e}")
+
+        # --- تحسين الصورة قبل الإرسال للذكاء الاصطناعي ---
+        if job.image_bytes:
+            job.image_bytes = self._optimize_image(job.image_bytes)
 
         persona_name = await self.settings_manager.get_persona(job.user_id)
         if not persona_name or persona_name not in self.persona_registry.get_available_personas():
@@ -132,7 +160,6 @@ class BotPipeline:
         return job
 
     async def rendering_step(self, job: PageJob) -> PageJob:
-        # لا نقوم بأي تعديل لرسالة الحالة هنا (صفر فوضى)
         persona_name = await self.settings_manager.get_persona(job.user_id)
         handler = self.persona_registry.get_handler(persona_name)
         

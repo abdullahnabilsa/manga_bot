@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Callable, Awaitable, Dict, Optional
+from typing import Callable, Awaitable, Dict, List, Optional
 from uuid import UUID
 
 from core.queue_manager import AsyncSingleWorkerQueue
@@ -14,14 +14,12 @@ logger = logging.getLogger(__name__)
 
 
 class JobManager:
-    MAX_RUNNING_JOBS = 1
-    POST_JOB_DELAY_SECONDS = 10
-
-    def __init__(self, queue_manager: AsyncSingleWorkerQueue, post_job_delay: int = 10) -> None:
+    def __init__(self, queue_manager: AsyncSingleWorkerQueue, max_running_jobs: int = 3, post_job_delay: int = 0) -> None:
         self._queue = queue_manager
         self._registry: Dict[UUID, PageJob] = {}
         self._lock = asyncio.Lock()
-        self._worker_task: Optional[asyncio.Task] = None
+        self._worker_tasks: List[asyncio.Task] = []
+        self.max_running_jobs = max_running_jobs
         self.POST_JOB_DELAY_SECONDS = post_job_delay
 
         self._processing_step: Optional[Callable[[PageJob], Awaitable[PageJob]]] = None
@@ -40,7 +38,6 @@ class JobManager:
         self._sending_step = sending_step
 
     def register_error_notifier(self, notifier: Callable[[PageJob, str], Awaitable[None]]) -> None:
-        """Inject an async function to handle user-facing error notifications."""
         self._error_notifier = notifier
 
     async def submit_job(self, job: PageJob) -> None:
@@ -54,39 +51,42 @@ class JobManager:
             return self._registry.get(job_id)
 
     async def start(self) -> None:
-        if self._worker_task is None:
-            self._worker_task = asyncio.create_task(self._worker_loop())
+        if not self._worker_tasks:
+            for i in range(self.max_running_jobs):
+                task = asyncio.create_task(self._worker_loop(i + 1))
+                self._worker_tasks.append(task)
 
     async def stop(self) -> None:
-        if self._worker_task:
-            self._worker_task.cancel()
+        for task in self._worker_tasks:
+            task.cancel()
+        for task in self._worker_tasks:
             try:
-                await self._worker_task
+                await task
             except asyncio.CancelledError:
                 pass
-            self._worker_task = None
+        self._worker_tasks.clear()
 
-    async def _worker_loop(self) -> None:
+    async def _worker_loop(self, worker_id: int) -> None:
         while True:
             job_id = await self._queue.dequeue()
             job = await self.get_job(job_id)
 
             if not job or not all([self._processing_step, self._rendering_step, self._sending_step]):
                 job_logger.log_error(job_id, RuntimeError("Job missing or pipeline steps not registered"))
-                await self._queue.complete_active_job()
+                await self._queue.task_done()
                 continue
 
             job_logger.log_started(job_id)
             
             try:
                 await self._transition_state(job, JobState.PROCESSING)
-                job = await self._processing_step(job) # type: ignore
+                job = await self._processing_step(job)
 
                 await self._transition_state(job, JobState.RENDERING)
-                job = await self._rendering_step(job) # type: ignore
+                job = await self._rendering_step(job)
 
                 await self._transition_state(job, JobState.SENDING)
-                job = await self._sending_step(job) # type: ignore
+                job = await self._sending_step(job)
 
                 await self._transition_state(job, JobState.FINISHED)
                 
@@ -99,7 +99,6 @@ class JobManager:
                 job_logger.log_error(job_id, e)
                 await self._transition_state(job, JobState.FAILED)
                 
-                # إرسال إشعار الخطأ للمستخدم
                 if self._error_notifier:
                     try:
                         await self._error_notifier(job, str(e))
@@ -107,7 +106,7 @@ class JobManager:
                         logger.error(f"Failed to send error notification: {notify_err}")
 
             finally:
-                await self._queue.complete_active_job()
+                await self._queue.task_done()
                 await asyncio.sleep(self.POST_JOB_DELAY_SECONDS)
 
     async def _transition_state(self, job: PageJob, new_state: JobState) -> None:

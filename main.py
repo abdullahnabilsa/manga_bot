@@ -38,7 +38,7 @@ logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s | %(le
 logger = logging.getLogger("manga_bot.main")
 
 queue_manager = AsyncSingleWorkerQueue(max_size=settings.queue_max_size)
-job_manager = JobManager(queue_manager, post_job_delay=settings.post_job_delay_seconds)
+job_manager = JobManager(queue_manager, max_running_jobs=settings.max_running_jobs, post_job_delay=settings.post_job_delay_seconds)
 batch_manager = BatchManager()
 settings_manager = UserSettingsManager(file_path="users_data.json")
 ai_provider = GeminiProvider(timeout=settings.ai_timeout_seconds)
@@ -79,17 +79,11 @@ async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE
     raise ApplicationHandlerStop
 
 async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    مُنقّب الحالات المعلقة وحاميها:
-    1. يحظر ويحذف أي رسالة نظام أثناء انتظار اسم الملف.
-    2. ينظف حالات انتظار الـ API Keys عند استخدام أي أوامر أو أزرار.
-    """
     is_command = update.message and update.message.text and update.message.text.startswith('/')
     is_callback = update.callback_query is not None
     is_persistent_btn = update.message and update.message.text in ["⚙️ الإعدادات", "📖 المساعدة", "🟢 بدء الجلسة", "🔴 إنهاء الجلسة"]
     is_media = update.message and (update.message.photo or (update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('image/')))
     
-    # 1. حماية وضع إدخال اسم الملف (حظر تام لأي تدخل آخر)
     if context.user_data.get('awaiting_session_filename'):
         if is_callback:
             await update.callback_query.answer("🚫 يرجى إرسال اسم الملف أولاً.", show_alert=True)
@@ -102,46 +96,33 @@ async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_T
                 pass
             raise ApplicationHandlerStop
             
-        # إذا كان نصاً عادياً، نسمح للدالة handle_text بالتقاطه كاسم للملف
         return
 
-    # 2. التطهير الشامل لحالة انتظار الـ API Keys
-    # إذا كان المستخدم ينتظر الـ API Key وقام بأي إجراء غير إرسال نص عادي، نمسح الحالة فوراً.
     is_system_interaction = is_command or is_callback or is_persistent_btn or is_media
     if (context.user_data.get('awaiting_admin_api_key') or context.user_data.get('awaiting_user_api_key')) and is_system_interaction:
         context.user_data['awaiting_admin_api_key'] = False
         context.user_data['awaiting_user_api_key'] = False
 
 async def session_guard_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    حارس الجلسة: يمنع استقبال أي رسائل أو أوامر أثناء الجلسة، 
-    باستثناء الصور وزر إنهاء الجلسة، ورسالة إدخال اسم الملف.
-    """
     user_id = update.effective_user.id
     if "batch_manager" not in context.bot_data: return
     if not await context.bot_data["batch_manager"].is_session_active(user_id): return
 
-    # السماح لإدخال اسم الملف
     if context.user_data.get('awaiting_session_filename'): return
 
-    # السماح لأزرار الإدارة (للسوبر أدمن) في حالات الطوارئ
     if update.callback_query and update.callback_query.data.startswith(("accept_req", "reject_req")):
         return
 
-    # منع أزرار الإعدادات والقوائم تماماً أثناء الجلسة
     if update.callback_query:
         await update.callback_query.answer("🚫 معطل أثناء الجلسة. اضغط 🔴 إنهاء الجلسة للخروج.", show_alert=True)
         raise ApplicationHandlerStop
 
-    # السماح بالصور
     if update.message and (update.message.photo or (update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('image/'))):
         return
 
-    # السماح بإنهاء الجلسة
     if update.message and update.message.text in ["/end_session", "🔴 إنهاء الجلسة"]:
         return
 
-    # حذف أي رسالة أخرى فوراً (نصوص، ملصقات، أوامر أخرى)
     if update.message:
         try:
             await update.message.delete()
@@ -202,7 +183,6 @@ async def post_shutdown(app: Application) -> None:
 def main() -> None:
     app = ApplicationBuilder().token(settings.telegram_bot_token).post_init(post_init).post_shutdown(post_shutdown).build()
 
-    # الـ Middlewares (حراس البوابات)
     app.add_handler(TypeHandler(Update, firewall_middleware), group=-3)
     app.add_handler(TypeHandler(Update, state_purge_middleware), group=-2)
     app.add_handler(TypeHandler(Update, session_guard_middleware), group=-1)

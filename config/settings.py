@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # Queue & Job Manager
     queue_max_size: int = 100
     post_job_delay_seconds: int = 0
+    max_running_jobs: int = 3  # <--- جديد: عدد العمال المتزامنين
 
     # Telegram rendering limits
     telegram_text_limit: int = 4096
