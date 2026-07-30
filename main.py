@@ -81,12 +81,13 @@ async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     مُنقّب الحالات المعلقة وحاميها:
-    1. يحظر ويحذف أي رسالة نظام (أوامر، أزرار قائمة، أزرار شات) أثناء انتظار اسم الملف.
-    2. ينظف حالات انتظار الـ API Keys إذا تم إرسال أي أمر.
+    1. يحظر ويحذف أي رسالة نظام أثناء انتظار اسم الملف.
+    2. ينظف حالات انتظار الـ API Keys عند استخدام أي أوامر أو أزرار.
     """
     is_command = update.message and update.message.text and update.message.text.startswith('/')
     is_callback = update.callback_query is not None
     is_persistent_btn = update.message and update.message.text in ["⚙️ الإعدادات", "📖 المساعدة", "🟢 بدء الجلسة", "🔴 إنهاء الجلسة"]
+    is_media = update.message and (update.message.photo or (update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('image/')))
     
     # 1. حماية وضع إدخال اسم الملف (حظر تام لأي تدخل آخر)
     if context.user_data.get('awaiting_session_filename'):
@@ -94,7 +95,7 @@ async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_T
             await update.callback_query.answer("🚫 يرجى إرسال اسم الملف أولاً.", show_alert=True)
             raise ApplicationHandlerStop
             
-        if is_command or is_persistent_btn:
+        if is_command or is_persistent_btn or is_media:
             try:
                 await update.message.delete()
             except Exception:
@@ -104,11 +105,12 @@ async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_T
         # إذا كان نصاً عادياً، نسمح للدالة handle_text بالتقاطه كاسم للملف
         return
 
-    # 2. تنظيف الحالات المعلقة الأخرى (API Keys) عند استخدام الأوامر
-    if is_command or is_callback:
-        if context.user_data.get('awaiting_admin_api_key') or context.user_data.get('awaiting_user_api_key'):
-            context.user_data['awaiting_admin_api_key'] = False
-            context.user_data['awaiting_user_api_key'] = False
+    # 2. التطهير الشامل لحالة انتظار الـ API Keys
+    # إذا كان المستخدم ينتظر الـ API Key وقام بأي إجراء غير إرسال نص عادي، نمسح الحالة فوراً.
+    is_system_interaction = is_command or is_callback or is_persistent_btn or is_media
+    if (context.user_data.get('awaiting_admin_api_key') or context.user_data.get('awaiting_user_api_key')) and is_system_interaction:
+        context.user_data['awaiting_admin_api_key'] = False
+        context.user_data['awaiting_user_api_key'] = False
 
 async def session_guard_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -119,7 +121,7 @@ async def session_guard_middleware(update: Update, context: ContextTypes.DEFAULT
     if "batch_manager" not in context.bot_data: return
     if not await context.bot_data["batch_manager"].is_session_active(user_id): return
 
-    # السماح لإدخال اسم الملف (تم التعامل معه في state_purge_middleware، نسمح بمروره هنا)
+    # السماح لإدخال اسم الملف
     if context.user_data.get('awaiting_session_filename'): return
 
     # السماح لأزرار الإدارة (للسوبر أدمن) في حالات الطوارئ
