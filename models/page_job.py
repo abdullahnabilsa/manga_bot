@@ -40,8 +40,8 @@ class PageJob(BaseModel):
     chat_id: int
     state: JobState = JobState.WAITING
     
-    image_file_id: Optional[str] = None  # <--- جديد: معرف الصورة للاستجابة الفورية
-    image_bytes: Optional[bytes] = None   # سيتم تعبئته لاحقاً أثناء المعالجة
+    image_file_id: Optional[str] = None  # للاستجابة الفورية
+    image_bytes: Optional[bytes] = None   # يُحمل لاحقاً أثناء المعالجة
     file_name: Optional[str] = None
     page_data: Optional[PageData] = None
     message_payloads: List[MessagePayload] = Field(default_factory=list)
@@ -51,5 +51,5 @@ class PageJob(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # --- UX Enhancements Fields ---
-    photo_message_id: Optional[int] = None  # ID of the user's photo message
-    status_message_id: Optional[int] = None # ID of the bot's "Processing..." message
+    photo_message_id: Optional[int] = None
+    status_message_id: Optional[int] = None

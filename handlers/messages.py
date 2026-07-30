@@ -52,7 +52,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     job = PageJob(
         user_id=user.id, 
         chat_id=chat_id, 
-        image_file_id=image_file_id,  # <--- تمرير file_id بدلاً من bytes
+        image_file_id=image_file_id, 
         file_name=file_name,
         photo_message_id=update.message.message_id
     )
@@ -63,8 +63,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         current_queue = await queue_manager.size()
         translated_count = len(await batch_manager.get_session_data(user.id))
         
-        # السيناريو الثاني: دفعة جديدة بعد انتهاء السابقة (الطابور كان فارغاً).
-        # نحذف الرسالة القديمة لمنع الازدحام ونبدأ رسالة جديدة بالأسفل.
         if queue_size_before == 0 and tracker_id:
             try: 
                 await context.bot.delete_message(chat_id=chat_id, message_id=tracker_id)
@@ -74,7 +72,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             tracker_id = None
             
         if not tracker_id:
-            # رسالة البدء المباشرة (قبل بدء التحليل)
             text = (
                 f"⏳ *تم استلام الصور وجاري بدء المعالجة...*\n\n"
                 f"📊 *إحصائيات الجلسة الحالية:*\n"
@@ -87,7 +84,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await batch_manager.set_tracker(user.id, msg.message_id)
             except Exception: pass
         else:
-            # تحديث عداد الطابور فقط إذا وردت صور إضافية أثناء المعالجة
             text = (
                 f"⏳ *تم استلام صور جديدة وإضافتها للطابور...*\n\n"
                 f"📊 *إحصائيات الجلسة الحالية:*\n"
@@ -99,7 +95,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await context.bot.edit_message_text(chat_id=chat_id, message_id=tracker_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
             except Exception: pass 
     else:
-        # وضع الترجمة المباشرة (بدون جلسة)
         eta_seconds = (queue_size_before + 1) * 15
         escaped_file = escape_markdown_v2(file_name) if file_name else "Unknown"
         if queue_size_before == 0:

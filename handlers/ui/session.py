@@ -14,6 +14,9 @@ async def start_session_command(update: Update, context: ContextTypes.DEFAULT_TY
     settings_manager = context.bot_data["settings_manager"]
     user_id = update.effective_user.id
     
+    # مسح أي حالات انتظار سابقة لمسح أي لبس
+    context.user_data['awaiting_session_filename'] = False
+    
     persona_name = await settings_manager.get_persona(user_id)
     if not persona_name: persona_name = "Default Translator"
     await batch_manager.start_session(user_id, persona_name)
