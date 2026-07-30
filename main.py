@@ -96,32 +96,36 @@ async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_T
     is_callback = update.callback_query is not None
     is_media = update.message and (update.message.photo or (update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('image/')))
     
+    # تحديد رسائل النظام والأزرار الثابتة
+    is_persistent_btn = update.message and update.message.text in ["⚙️ الإعدادات", "📖 المساعدة", "🟢 بدء الجلسة", "🔴 إنهاء الجلسة"]
+    
     # 1. حماية وضع إدخال اسم الملف (Input Integrity First)
     if context.user_data.get('awaiting_session_filename'):
+        # منع أزرار الإعدادات (Inline Keyboards)
         if is_callback:
-            await update.callback_query.answer("📝 يرجى إرسال اسم الملف أولاً.", show_alert=True)
+            await update.callback_query.answer("📝 يرجى إرسال اسم الملف فقط كنص.", show_alert=True)
             raise ApplicationHandlerStop
             
-        # فك القفل الآمن إذا أرسل /start (مخرج الطوارئ)
+        # مخرج الطوارئ: فك القفل إذا أرسل /start
         if update.message and update.message.text == "/start":
             context.user_data['awaiting_session_filename'] = False
             await batch_manager.set_finalizing(update.effective_user.id, False)
             return # دع أمر /start يعمل بشكل طبيعي
             
-        # حظر الأوامر الأخرى (مثل /settings) والصور ومنعها من العمل
-        if (is_command and update.message.text != "/start") or is_media:
-            try: await update.message.delete()
-            except: pass
+        # السماح فقط بالنص العادي (الذي ليس أمراً وليس زراً ثابتاً وليس صورة)
+        if update.message and update.message.text and not is_command and not is_persistent_btn and not is_media:
+            await receive_session_filename(update, context)
             raise ApplicationHandlerStop
             
-        # أي نص عادي (بما في ذلك "🔴 إنهاء الجلسة" أو "⚙️ الإعدادات")
-        # يتم اعتماده حرفياً كاسم للملف، ونعيق تنفيذ أي Handler آخر.
-        if update.message and update.message.text:
-            await receive_session_filename(update, context)
+        # أي شيء آخر (أوامر، أزرار ثابتة، صور، ملصقات) -> حذف فوري وصامت
+        if update.message:
+            try: 
+                await update.message.delete()
+            except Exception: 
+                pass
             raise ApplicationHandlerStop
 
     # 2. التطهير الشامل لحالة انتظار الـ API Keys
-    is_persistent_btn = update.message and update.message.text in ["⚙️ الإعدادات", "📖 المساعدة", "🟢 بدء الجلسة", "🔴 إنهاء الجلسة"]
     is_system_interaction = is_command or is_callback or is_persistent_btn or is_media
     if (context.user_data.get('awaiting_admin_api_key') or context.user_data.get('awaiting_user_api_key')) and is_system_interaction:
         context.user_data['awaiting_admin_api_key'] = False
