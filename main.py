@@ -80,22 +80,35 @@ async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    مُنقّب الحالات المعلقة: 
-    يراقب أي أمر (يبدأ بـ /) أو ضغطة زر (Callback).
-    إذا وجدها، يقوم بتصفير أي حالة انتظار معلقة لمنع تسريب الحالة (State Bleed).
+    مُنقّب الحالات المعلقة وحاميها:
+    1. يحظر ويحذف أي رسالة نظام (أوامر، أزرار قائمة، أزرار شات) أثناء انتظار اسم الملف.
+    2. ينظف حالات انتظار الـ API Keys إذا تم إرسال أي أمر.
     """
     is_command = update.message and update.message.text and update.message.text.startswith('/')
     is_callback = update.callback_query is not None
+    is_persistent_btn = update.message and update.message.text in ["⚙️ الإعدادات", "📖 المساعدة", "🟢 بدء الجلسة", "🔴 إنهاء الجلسة"]
     
+    # 1. حماية وضع إدخال اسم الملف (حظر تام لأي تدخل آخر)
+    if context.user_data.get('awaiting_session_filename'):
+        if is_callback:
+            await update.callback_query.answer("🚫 يرجى إرسال اسم الملف أولاً.", show_alert=True)
+            raise ApplicationHandlerStop
+            
+        if is_command or is_persistent_btn:
+            try:
+                await update.message.delete()
+            except Exception:
+                pass
+            raise ApplicationHandlerStop
+            
+        # إذا كان نصاً عادياً، نسمح للدالة handle_text بالتقاطه كاسم للملف
+        return
+
+    # 2. تنظيف الحالات المعلقة الأخرى (API Keys) عند استخدام الأوامر
     if is_command or is_callback:
-        if context.user_data.get('awaiting_admin_api_key') or context.user_data.get('awaiting_user_api_key') or context.user_data.get('awaiting_session_filename'):
+        if context.user_data.get('awaiting_admin_api_key') or context.user_data.get('awaiting_user_api_key'):
             context.user_data['awaiting_admin_api_key'] = False
             context.user_data['awaiting_user_api_key'] = False
-            # لا نمسح awaiting_session_filename هنا إذا كان أمر إنهاء الجلسة، 
-            # لأن دالة إنهاء الجلسة هي من تفعّله. ولكن نمسحه إذا كان أي أمر آخر.
-            # لحل هذا التعارض بذكاء: نتركها كما هي وسيتولى session_guard حذفها إن لزم.
-            # لكن لضمان النظافة المطلقة، نمسحها:
-            context.user_data['awaiting_session_filename'] = False
 
 async def session_guard_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -106,7 +119,7 @@ async def session_guard_middleware(update: Update, context: ContextTypes.DEFAULT
     if "batch_manager" not in context.bot_data: return
     if not await context.bot_data["batch_manager"].is_session_active(user_id): return
 
-    # السماح لإدخال اسم الملف
+    # السماح لإدخال اسم الملف (تم التعامل معه في state_purge_middleware، نسمح بمروره هنا)
     if context.user_data.get('awaiting_session_filename'): return
 
     # السماح لأزرار الإدارة (للسوبر أدمن) في حالات الطوارئ
