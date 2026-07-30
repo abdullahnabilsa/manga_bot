@@ -23,7 +23,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     image_file_id: Optional[str] = None
     file_name: Optional[str] = None
     
-    # الاستجابة الفورية: التقاط file_id فقط دون تحميل الصورة
     if update.message.photo:
         image_file_id = update.message.photo[-1].file_id
         file_name = f"Photo_{update.message.message_id}.jpg"
@@ -40,7 +39,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await context.bot.send_message(chat_id=chat_id, text="⚠️ *خطأ في الاستلام\\.*\nلم أتمكن من قراءة الصورة، يرجى إعادة إرسالها\\.", parse_mode=ParseMode.MARKDOWN_V2)
         return
     
-    # إلغاء انتظار اسم الملف إذا أرسل المستخدم صورة بالخطأ أثناء الانتظار
     if context.user_data.get('awaiting_session_filename'):
         context.user_data['awaiting_session_filename'] = False
         await context.bot.send_message(chat_id=chat_id, text="↩️ *تم إلغاء انتظار الاسم وإضافة الصورة للطابور\\.\"", parse_mode=ParseMode.MARKDOWN_V2)
@@ -48,7 +46,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     is_session_active = await batch_manager.is_session_active(user.id)
     queue_size_before = await queue_manager.size()
     
-    # إنشاء الـ Job وإدخاله في الطابور فوراً (Queue First)
     job = PageJob(
         user_id=user.id, 
         chat_id=chat_id, 
@@ -125,6 +122,9 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             pass
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # إذا وصل النص إلى هنا، فهو ليس أمراً (تم تصفية الأوامر مسبقاً)
+    # ولا يوجد حالة انتظار معلقة تم تفعيلها حديثاً (لأن الـ Middleware مسحها)
+    # لكن قد يكون النص العادي والذي يجب توجيهه بناءً على الحالة الحالية
     if context.user_data.get('awaiting_user_api_key'):
         await receive_user_api_key(update, context)
     elif context.user_data.get('awaiting_admin_api_key'):

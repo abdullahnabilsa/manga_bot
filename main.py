@@ -78,18 +78,38 @@ async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     raise ApplicationHandlerStop
 
+async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    مُنقّب الحالات المعلقة: 
+    يراقب أي أمر (يبدأ بـ /) أو ضغطة زر (Callback).
+    إذا وجدها، يقوم بتصفير أي حالة انتظار معلقة لمنع تسريب الحالة (State Bleed).
+    """
+    is_command = update.message and update.message.text and update.message.text.startswith('/')
+    is_callback = update.callback_query is not None
+    
+    if is_command or is_callback:
+        if context.user_data.get('awaiting_admin_api_key') or context.user_data.get('awaiting_user_api_key') or context.user_data.get('awaiting_session_filename'):
+            context.user_data['awaiting_admin_api_key'] = False
+            context.user_data['awaiting_user_api_key'] = False
+            # لا نمسح awaiting_session_filename هنا إذا كان أمر إنهاء الجلسة، 
+            # لأن دالة إنهاء الجلسة هي من تفعّله. ولكن نمسحه إذا كان أي أمر آخر.
+            # لحل هذا التعارض بذكاء: نتركها كما هي وسيتولى session_guard حذفها إن لزم.
+            # لكن لضمان النظافة المطلقة، نمسحها:
+            context.user_data['awaiting_session_filename'] = False
+
 async def session_guard_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     حارس الجلسة: يمنع استقبال أي رسائل أو أوامر أثناء الجلسة، 
     باستثناء الصور وزر إنهاء الجلسة، ورسالة إدخال اسم الملف.
     """
     user_id = update.effective_user.id
-    if not await batch_manager.is_session_active(user_id): return
+    if "batch_manager" not in context.bot_data: return
+    if not await context.bot_data["batch_manager"].is_session_active(user_id): return
 
     # السماح لإدخال اسم الملف
     if context.user_data.get('awaiting_session_filename'): return
 
-    # السماح بأزرار الإدارة (للسوبر أدمن فقط) في حالات الطوارئ
+    # السماح لأزرار الإدارة (للسوبر أدمن) في حالات الطوارئ
     if update.callback_query and update.callback_query.data.startswith(("accept_req", "reject_req")):
         return
 
@@ -168,7 +188,8 @@ def main() -> None:
     app = ApplicationBuilder().token(settings.telegram_bot_token).post_init(post_init).post_shutdown(post_shutdown).build()
 
     # الـ Middlewares (حراس البوابات)
-    app.add_handler(TypeHandler(Update, firewall_middleware), group=-2)
+    app.add_handler(TypeHandler(Update, firewall_middleware), group=-3)
+    app.add_handler(TypeHandler(Update, state_purge_middleware), group=-2)
     app.add_handler(TypeHandler(Update, session_guard_middleware), group=-1)
     
     app.add_handler(CommandHandler("start", start_command))

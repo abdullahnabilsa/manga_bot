@@ -17,6 +17,7 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
 
 async def add_public_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await is_admin(update, context): return
+    # إذا وصلنا هنا، الـ state_purge_middleware قد قام بتنظيف أي حالة سابقة بالفعل
     context.user_data['awaiting_admin_api_key'] = True
     await update.message.reply_text("👑 *إضافة مفتاح عام*\nأرسل مفتاح الـ API العام الآن ليتم إضافته للبوت\\.", parse_mode=ParseMode.MARKDOWN_V2)
 
