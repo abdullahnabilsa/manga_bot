@@ -98,37 +98,55 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         output_method = user_settings.get("output_method", "files_only")
         if output_method == "chat_and_files": output_method = "messages_and_files"
         
-        # بروتوكول "الصمت المطلق للدفعات":
-        # إذا كانت هذه هي الصورة الأولى (الطابور كان فارغاً)
-        if queue_size_before == 0:
-            if output_method == "messages_only":
-                # تسليم صامت تام للنصوص
-                try:
-                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-                except Exception: pass
-                # job.status_message_id يبقى None
-            else:
-                # رسالة حالة واحدة فقط للدفعة الأولى
+        if output_method == "messages_only":
+            # تسليم صامت تام للنصوص
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+            except Exception: pass
+        else:
+            # ملفات
+            if queue_size_before == 0:
+                # دفعة جديدة: التخلص من أي رسالة معلقة من دفعة سابقة
+                direct_msg_id = context.user_data.get('direct_status_msg_id')
+                if direct_msg_id:
+                    try: await context.bot.delete_message(chat_id=chat_id, message_id=direct_msg_id)
+                    except: pass
+                
                 text = "⏳ *جاري التحليل الآن\\.\\.\\.*"
                 try:
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
                     status_msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
                     job.status_message_id = status_msg.message_id
+                    context.user_data['direct_status_msg_id'] = status_msg.message_id
                 except RetryAfter as e:
                     await asyncio.sleep(e.retry_after)
                     try:
                         status_msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
                         job.status_message_id = status_msg.message_id
+                        context.user_data['direct_status_msg_id'] = status_msg.message_id
                     except Exception:
                         pass
                 except TelegramError:
                     pass
-        else:
-            # صور إضافية في الطابور (دُفعة) -> صامتة تماماً لمنع الفوضى
-            try:
-                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-            except Exception: pass
-            # job.status_message_id يبقى None ليتجاوزه الـ Pipeline والـ Sender بهدوء
+            else:
+                # دفعة مستمرة: تحديث رسالة الحالة الموحدة للدفعة
+                direct_msg_id = context.user_data.get('direct_status_msg_id')
+                if direct_msg_id:
+                    text = f"⏳ *جاري التحليل...*\n📦 في الطابور: `{queue_size_before}`"
+                    try:
+                        await context.bot.edit_message_text(chat_id=chat_id, message_id=direct_msg_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+                        job.status_message_id = direct_msg_id
+                    except Exception:
+                        # If edit fails, create new
+                        try:
+                            status_msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+                            job.status_message_id = status_msg.message_id
+                            context.user_data['direct_status_msg_id'] = status_msg.message_id
+                        except: pass
+                else:
+                    # Fallback just in case
+                    try: await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                    except: pass
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.user_data.get('awaiting_user_api_key'):

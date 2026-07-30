@@ -75,7 +75,10 @@ class DirectSender:
                 await self.pipeline.safe_edit_or_send(job, text)
                 return job # الخروج فوراً دون حذف رسالة الخطأ
                 
-        # Zero-Clutter: حذف رسالة الحالة بعد النجاح
-        await self.pipeline.safe_delete_message(job)
+        # Zero-Clutter: حذف رسالة الحالة بعد النجاح فقط إذا كان الطابور فارغاً
+        # إذا كان الطابور لا يزال به عناصر، نترك الرسالة ليقوم الـ Pipeline بتعديلها للصورة التالية
+        queue_size = await self.pipeline.queue_manager.size()
+        if queue_size == 0:
+            await self.pipeline.safe_delete_message(job)
             
         return job
