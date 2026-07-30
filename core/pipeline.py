@@ -27,21 +27,22 @@ class BotErrorNotifier:
         self._bot = bot
 
     async def notify(self, job: PageJob, error_msg: str) -> None:
+        # توحيد الأخطاء: تعديل رسالة الحالة الحالية أو إرسال واحدة جديدة فقط
+        text = f"❌ *فشلت المعالجة*\n🖼️ الملف: `{escape_markdown_v2(job.file_name)}`\n⚠️ لم يتمكن النظام من ترجمة هذه الصفحة\\.\n_يرجى المحاولة مرة أخرى لاحقاً._"
         try:
-            await self._bot.send_message(
-                chat_id=job.chat_id,
-                text="⚠️ *عذراً، واجه الذكاء الاصطناعي مشكلة فنية في هذه الصفحة\\.*\nيرجى المحاولة مرة أخرى لاحقاً\\.",
-                parse_mode=ParseMode.MARKDOWN_V2
-            )
             if job.status_message_id:
-                try:
-                    await self._bot.edit_message_text(
-                        chat_id=job.chat_id,
-                        message_id=job.status_message_id,
-                        text=f"❌ *فشلت المعالجة*\n🖼️ الملف: `{escape_markdown_v2(job.file_name)}`\nلم يتمكن النظام من ترجمة هذه الصفحة\\.",
-                        parse_mode=ParseMode.MARKDOWN_V2
-                    )
-                except: pass
+                await self._bot.edit_message_text(
+                    chat_id=job.chat_id,
+                    message_id=job.status_message_id,
+                    text=text,
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+            else:
+                await self._bot.send_message(
+                    chat_id=job.chat_id,
+                    text=text,
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
         except Exception as e:
             logger.error(f"Failed to send error notification: {e}")
 
@@ -94,10 +95,13 @@ class BotPipeline:
     async def processing_step(self, job: PageJob) -> PageJob:
         await self.bot.send_chat_action(chat_id=job.chat_id, action=ChatAction.TYPING)
         
-        # إرسال رسالة التحليل فقط إذا لم يكن في جلسة
+        # تعديل رسالة الحالة إلى "التحليل" مرة واحدة فقط إن وجدت
         is_session_active = await self.batch_manager.is_session_active(job.user_id)
-        if not is_session_active:
-            await self.safe_edit_or_send(job, f"🔍 *جاري التحليل\\.*\n🖼️ الملف: `{escape_markdown_v2(job.file_name)}`\n⏳ الذكاء الاصطناعي يقرأ الصورة ويستخرج النصوص\\.\\.\\.")
+        if not is_session_active and job.status_message_id:
+            text = f"🔍 *جاري التحليل\\.*\n🖼️ الملف: `{escape_markdown_v2(job.file_name)}`\n⏳ _الذكاء الاصطناعي يقرأ الصورة..._"
+            try:
+                await self.bot.edit_message_text(chat_id=job.chat_id, message_id=job.status_message_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+            except Exception: pass
 
         # --- تحميل الصورة الفعلي هنا (أثناء المعالجة) ---
         if not job.image_bytes and job.image_file_id:
@@ -128,11 +132,7 @@ class BotPipeline:
         return job
 
     async def rendering_step(self, job: PageJob) -> PageJob:
-        # إرسال رسالة التنسيق فقط إذا لم يكن في جلسة
-        is_session_active = await self.batch_manager.is_session_active(job.user_id)
-        if not is_session_active:
-            await self.safe_edit_or_send(job, f"✅ *اكتمل التحليل\\!*\n🖼️ الملف: `{escape_markdown_v2(job.file_name)}`\n⏳ جاري تنسيق النصوص وإنشاء المستند\\.\\.\\.")
-
+        # لا نقوم بأي تعديل لرسالة الحالة هنا (صفر فوضى)
         persona_name = await self.settings_manager.get_persona(job.user_id)
         handler = self.persona_registry.get_handler(persona_name)
         

@@ -36,10 +36,9 @@ class DirectSender:
         
         # 2. توليد وإرسال الملفات إذا كان الإخراج يشمل ذلك
         if output_method in ["files_only", "messages_and_files"]:
+            # التسليم الصامت: لا نرسل رسالة "جاري الرفع"، المؤشر الصامت يكفي.
             file_io_txt = handler.generate_txt([job.page_data]) if fmt in ["txt", "both"] else None
             file_io_docx = handler.generate_docx([job.page_data]) if fmt in ["docx", "both"] else None
-            
-            await self.pipeline.safe_edit_or_send(job, f"☁️ *جاري رفع المستند\\.*\n🖼️ الملف: `{escape_markdown_v2(job.file_name)}`\n⏳ جاري الإرسال\\.\\.\\.")
             
             sent_successfully = True
             caption_text = f"📄 ترجمة: {escape_markdown_v2(job.file_name)}"
@@ -71,12 +70,12 @@ class DirectSender:
                 logger.error(f"Failed to send document: {e}")
                 sent_successfully = False
                 
-            if sent_successfully:
-                await self.pipeline.safe_delete_message(job) # Zero-Clutter
-            else:
-                await self.pipeline.safe_edit_or_send(job, f"❌ *فشل الإرسال\\.*\n🖼️ الملف: `{escape_markdown_v2(job.file_name)}`\nتعذر إرسال الملف\\. حاول مرة أخرى\\.")
-        else:
-            # إذا كان messages_only، نحذف رسالة الحالة بعد إرسال الرسائل بنجاح
-            await self.pipeline.safe_delete_message(job)
+            if not sent_successfully:
+                text = f"❌ *فشل الإرسال\\.*\n🖼️ الملف: `{escape_markdown_v2(job.file_name)}`\nتعذر إرسال الملف\\. حاول مرة أخرى\\."
+                await self.pipeline.safe_edit_or_send(job, text)
+                return job # الخروج فوراً دون حذف رسالة الخطأ
+                
+        # Zero-Clutter: حذف رسالة الحالة بعد النجاح
+        await self.pipeline.safe_delete_message(job)
             
         return job

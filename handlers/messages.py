@@ -17,6 +17,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     job_manager = context.bot_data["job_manager"]
     queue_manager = context.bot_data["queue_manager"]
     batch_manager = context.bot_data["batch_manager"]
+    settings_manager = context.bot_data["settings_manager"]
     
     user = update.effective_user
     chat_id = update.effective_chat.id
@@ -92,39 +93,50 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await context.bot.edit_message_text(chat_id=chat_id, message_id=tracker_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
             except Exception: pass 
     else:
+        # وضع الترجمة المباشرة (Direct Mode)
+        user_settings = await settings_manager.get_user_settings(user.id)
+        output_method = user_settings.get("output_method", "files_only")
+        if output_method == "chat_and_files": output_method = "messages_and_files"
+        
         eta_seconds = (queue_size_before + 1) * 15
         escaped_file = escape_markdown_v2(file_name) if file_name else "Unknown"
-        if queue_size_before == 0:
-            text = (
-                f"📥 *تم استلام الصورة بنجاح\\.*\n"
-                f"🖼️ الملف: `{escaped_file}`\n"
-                f"⏳ *جاري التحليل الآن\\.\\.\\.*"
-            )
-        else:
-            text = (
-                f"📥 *تم استلام الصورة بنجاح\\.*\n"
-                f"🖼️ الملف: `{escaped_file}`\n"
-                f"⏳ *في الطابور:* مكانك الحالي {queue_size_before} \\| الوقت المتوقع: ~{eta_seconds} ثانية\\."
-            )
         
-        try:
-            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-            status_msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-            job.status_message_id = status_msg.message_id
-        except RetryAfter as e:
-            await asyncio.sleep(e.retry_after)
+        # بروتوكول التسليم الصامت:
+        # إذا كان الطابور فارغاً والإخراج "رسائل فقط"، لا نرسل أي رسالة حالة.
+        if queue_size_before == 0 and output_method == "messages_only":
             try:
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+            except Exception: pass
+            # job.status_message_id يبقى None
+        else:
+            if queue_size_before == 0:
+                text = (
+                    f"📥 *تم استلام الصورة بنجاح\\.*\n"
+                    f"🖼️ الملف: `{escaped_file}`\n"
+                    f"⏳ *جاري التحليل الآن\\.\\.\\.*"
+                )
+            else:
+                text = (
+                    f"📥 *تم استلام الصورة بنجاح\\.*\n"
+                    f"🖼️ الملف: `{escaped_file}`\n"
+                    f"⏳ *في الطابور:* مكانك الحالي {queue_size_before} \\| الوقت المتوقع: ~{eta_seconds} ثانية\\."
+                )
+            
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
                 status_msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
                 job.status_message_id = status_msg.message_id
-            except Exception:
+            except RetryAfter as e:
+                await asyncio.sleep(e.retry_after)
+                try:
+                    status_msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+                    job.status_message_id = status_msg.message_id
+                except Exception:
+                    pass
+            except TelegramError:
                 pass
-        except TelegramError:
-            pass
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # إذا وصل النص إلى هنا، فهو ليس أمراً (تم تصفية الأوامر مسبقاً)
-    # ولا يوجد حالة انتظار معلقة تم تفعيلها حديثاً (لأن الـ Middleware مسحها)
-    # لكن قد يكون النص العادي والذي يجب توجيهه بناءً على الحالة الحالية
     if context.user_data.get('awaiting_user_api_key'):
         await receive_user_api_key(update, context)
     elif context.user_data.get('awaiting_admin_api_key'):
