@@ -24,7 +24,12 @@ class Settings(BaseSettings):
     # Queue & Job Manager
     queue_max_size: int = 100
     post_job_delay_seconds: int = 0
-    max_running_jobs: int = 3  # <--- جديد: عدد العمال المتزامنين
+    max_running_jobs: int = 3
+    max_jobs_per_user: int = 5  # <--- جديد: العدالة لكل مستخدم
+
+    # Circuit Breaker (High Availability) <--- جديد
+    cb_failure_threshold: int = 5  # عدد الأخطاء المتتالية لفتح الدائرة
+    cb_cooldown_seconds: int = 60  # مدة التبريد قبل السماح بطلب اختبار
 
     # Telegram rendering limits
     telegram_text_limit: int = 4096

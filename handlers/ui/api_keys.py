@@ -13,7 +13,7 @@ async def api_key_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     query = update.callback_query
     await query.answer()
     api_key_manager = context.bot_data["api_key_manager"]
-    user_key = api_key_manager.get_user_key(query.from_user.id)
+    user_key = await api_key_manager.get_user_key(query.from_user.id)
     
     text = "🔐 *إدارة مفتاح API الخاص*\n\n"
     if user_key:
@@ -22,7 +22,7 @@ async def api_key_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         text += "مفتاحك يُستخدم حصرياً لترجماتك لضمان أقصى سرعة ممكنة\\.\n"
         text += "إذا أردت العودة لاستخدام المفاتيح العامة للبوت، يمكنك حذف مفتاحك\\."
     else:
-        public_keys = api_key_manager.get_public_keys()
+        public_keys = await api_key_manager.get_public_keys()
         text += f"🌐 *حالتك الحالية:* تستخدم المفاتيح العامة للبوت \\({len(public_keys)} مفتاح متاح\\)\\.\n\n"
         text += "يمكنك إضافة مفتاح API الخاص بك من Google AI Studio لضمان استقرار الترجمة وعدم التأثر بازدحام المستخدمين الآخرين\\."
         

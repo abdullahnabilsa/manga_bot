@@ -5,6 +5,7 @@ import asyncio
 import base64
 import json
 import logging
+import time
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -14,11 +15,14 @@ from ai.base_provider import BaseAIProvider
 
 logger = logging.getLogger(__name__)
 
+class ServiceUnavailableError(Exception):
+    """Custom exception raised when the Circuit Breaker is open."""
+    pass
 
 class GeminiProvider(BaseAIProvider):
     """
     Concrete AI provider for Google Gemini API.
-    Implements a multi-key, multi-model fallback mechanism.
+    Implements multi-key, multi-model fallback and a Circuit Breaker.
     """
 
     FALLBACK_MODELS: List[str] = [
@@ -32,9 +36,40 @@ class GeminiProvider(BaseAIProvider):
     MAX_RETRIES_PER_MODEL = 2
     RETRY_DELAY_SECONDS = 1.0
 
-    def __init__(self, timeout: float = 60.0) -> None:
+    def __init__(self, timeout: float = 60.0, cb_threshold: int = 5, cb_cooldown: int = 60) -> None:
         self._base_url = "https://generativelanguage.googleapis.com/v1beta/models"
         self._timeout = aiohttp.ClientTimeout(total=timeout)
+        
+        # Circuit Breaker State
+        self._cb_threshold = cb_threshold
+        self._cb_cooldown = cb_cooldown
+        self._cb_failures = 0
+        self._cb_open_until = 0.0
+        self._cb_lock = asyncio.Lock()
+
+    async def _check_circuit(self) -> None:
+        """Check if the circuit is open. If so, reject requests immediately."""
+        async with self._cb_lock:
+            if self._cb_failures >= self._cb_threshold and time.time() < self._cb_open_until:
+                raise ServiceUnavailableError("Circuit Breaker is OPEN. AI Service is temporarily unavailable.")
+            
+            # If cooldown has passed, we are in HALF-OPEN state. We allow the request to proceed.
+
+    async def _record_success(self) -> None:
+        """Reset failure count on success (closes the circuit)."""
+        async with self._cb_lock:
+            if self._cb_failures > 0:
+                logger.info("Circuit Breaker CLOSED. Service restored.")
+            self._cb_failures = 0
+            self._cb_open_until = 0.0
+
+    async def _record_failure(self) -> None:
+        """Increment failure count and potentially open the circuit."""
+        async with self._cb_lock:
+            self._cb_failures += 1
+            if self._cb_failures >= self._cb_threshold:
+                self._cb_open_until = time.time() + self._cb_cooldown
+                logger.warning(f"Circuit Breaker OPENED for {self._cb_cooldown}s due to {self._cb_failures} consecutive failures.")
 
     async def extract_raw_json(
         self,
@@ -43,7 +78,11 @@ class GeminiProvider(BaseAIProvider):
         prompt_text: str,
         api_keys: List[str]
     ) -> Dict[str, Any]:
+        # 1. Check Circuit Breaker before doing any work
+        await self._check_circuit()
+
         if not api_keys:
+            await self._record_failure()
             raise RuntimeError(f"JobID={job_id} | No API keys provided.")
 
         b64_image = base64.b64encode(image_bytes).decode("utf-8")
@@ -52,15 +91,16 @@ class GeminiProvider(BaseAIProvider):
         last_exception: Optional[Exception] = None
 
         async with aiohttp.ClientSession(timeout=self._timeout) as session:
-            # المراوحة بين المفاتيح أولاً
             for key_idx, api_key in enumerate(api_keys):
                 key_masked = api_key[:8] + "..." + api_key[-4:]
-                # المراوحة بين النماذج لكل مفتاح
                 for model_name in self.FALLBACK_MODELS:
                     for attempt in range(1, self.MAX_RETRIES_PER_MODEL + 1):
                         try:
                             logger.info(f"JobID={job_id} | Key {key_idx+1}/{len(api_keys)} ({key_masked}) | Model: {model_name} | Attempt {attempt}")
                             result = await self._call_model(session, model_name, payload, job_id, api_key)
+                            
+                            # Success! Close circuit.
+                            await self._record_success()
                             logger.info(f"JobID={job_id} | Success with key {key_masked} and model: {model_name}")
                             return result
                         
@@ -75,16 +115,15 @@ class GeminiProvider(BaseAIProvider):
                             else:
                                 logger.warning(f"JobID={job_id} | Model {model_name} failed for key {key_masked}: {error_str}")
                                 last_exception = e
-                                break # انتقل للموديل التالي
+                                break 
                                 
                         except Exception as e:
                             logger.warning(f"JobID={job_id} | Unexpected error on {model_name} for key {key_masked}: {str(e)}")
                             last_exception = e
-                            break # انتقل للموديل التالي
+                            break 
 
-                # إذا كان المفتاح قد استنفد جميع النماذج، انتقل للمفتاح التالي
-                logger.warning(f"JobID={job_id} | API Key {key_masked} exhausted all models. Trying next key if available...")
-
+        # If we reach here, all keys and models failed for this job
+        await self._record_failure()
         raise RuntimeError(
             f"All API keys and Gemini models failed for JobID={job_id}. Last error: {str(last_exception)}"
         )

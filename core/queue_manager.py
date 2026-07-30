@@ -15,10 +15,16 @@ class AsyncSingleWorkerQueue:
     """
     def __init__(self, max_size: int = 100) -> None:
         self._queue: asyncio.Queue[UUID] = asyncio.Queue(maxsize=max_size)
+        self._max_size = max_size
 
     async def enqueue(self, job_id: UUID) -> None:
         """Add a Job ID to the back of the queue."""
         await self._queue.put(job_id)
+        job_logger._logger.info(f"JobID={job_id} | Event=ENQUEUED | QueueSize={self._queue.qsize()}")
+
+    def enqueue_nowait(self, job_id: UUID) -> None:
+        """Attempt to add a Job ID immediately. Raises QueueFull if full."""
+        self._queue.put_nowait(job_id)
         job_logger._logger.info(f"JobID={job_id} | Event=ENQUEUED | QueueSize={self._queue.qsize()}")
 
     async def dequeue(self) -> UUID:
@@ -32,3 +38,7 @@ class AsyncSingleWorkerQueue:
     async def size(self) -> int:
         """Return the current number of waiting jobs."""
         return self._queue.qsize()
+
+    def is_full(self) -> bool:
+        """Check if the queue has reached its maximum capacity."""
+        return self._queue.full()

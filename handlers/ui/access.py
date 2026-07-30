@@ -7,7 +7,7 @@ from utils.markdown_escaper import escape_markdown_v2
 
 async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     access_manager = context.bot_data["access_manager"]
-    if not access_manager.is_admin(update.effective_user.id):
+    if not await access_manager.is_admin(update.effective_user.id):
         await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.")
         return
     
@@ -27,7 +27,7 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def remove_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     access_manager = context.bot_data["access_manager"]
-    if not access_manager.is_admin(update.effective_user.id):
+    if not await access_manager.is_admin(update.effective_user.id):
         await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.")
         return
     
@@ -87,14 +87,14 @@ async def remove_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     access_manager = context.bot_data["access_manager"]
-    if not access_manager.is_admin(update.effective_user.id):
+    if not await access_manager.is_admin(update.effective_user.id):
         await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.")
         return
     
-    users = access_manager.get_users()
-    admins = access_manager.get_admins()
+    users = await access_manager.get_users()
+    admins = await access_manager.get_admins()
     super_admin_id = access_manager._super_admin_id
-    join_status = "مفتوح 🟢" if access_manager.is_join_requests_open() else "مغلق 🔴"
+    join_status = "مفتوح 🟢" if await access_manager.is_join_requests_open() else "مغلق 🔴"
     
     text = "📋 *قائمة الصلاحيات*\n\n"
     text += f"🚪 *حالة باب الانضمام:* {join_status}\n\n"
@@ -116,7 +116,7 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def open_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     access_manager = context.bot_data["access_manager"]
-    if not access_manager.is_admin(update.effective_user.id):
+    if not await access_manager.is_admin(update.effective_user.id):
         await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.")
         return
     
@@ -125,7 +125,7 @@ async def open_requests_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def close_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     access_manager = context.bot_data["access_manager"]
-    if not access_manager.is_admin(update.effective_user.id):
+    if not await access_manager.is_admin(update.effective_user.id):
         await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.")
         return
     
@@ -137,7 +137,7 @@ async def handle_request_callback(update: Update, context: ContextTypes.DEFAULT_
     await query.answer()
     access_manager = context.bot_data["access_manager"]
     
-    if not access_manager.is_admin(query.from_user.id):
+    if not await access_manager.is_admin(query.from_user.id):
         return
         
     data = query.data

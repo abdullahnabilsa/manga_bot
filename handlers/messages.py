@@ -12,6 +12,7 @@ from utils.markdown_escaper import escape_markdown_v2
 from handlers.ui.api_keys import receive_user_api_key
 from handlers.ui.admin import receive_admin_api_key
 from handlers.ui.session import receive_session_filename
+from core.job_manager import JobSubmissionResult
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     job_manager = context.bot_data["job_manager"]
@@ -54,8 +55,27 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         file_name=file_name,
         photo_message_id=update.message.message_id
     )
-    await job_manager.submit_job(job)
     
+    # --- إدارة الضغط الخلفي (Backpressure Handling) ---
+    submission_result = await job_manager.submit_job(job)
+    
+    if submission_result == JobSubmissionResult.QUEUE_FULL:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="🚨 *النظام مشغول جداً حالياً\\.*\nلقد وصل الطابور إلى الحد الأقصى\\. يرجى الانتظار دقيقة وإعادة إرسال الصورة\\.", 
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
+        return
+        
+    if submission_result == JobSubmissionResult.USER_LIMIT_REACHED:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="⏳ *لديك 5 صور قيد المعالجة بالفعل\\.*\nيرجى الانتظار حتى تكتمل معالجة بعض صورك قبل إرسال المزيد\\.", 
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
+        return
+
+    # إذا نجح الإدخال، نتابع المنطق العادي
     if is_session_active:
         tracker_id = await batch_manager.get_tracker(user.id)
         current_queue = await queue_manager.size()
@@ -106,7 +126,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         else:
             # ملفات
             if queue_size_before == 0:
-                # دفعة جديدة: التخلص من أي رسالة معلقة من دفعة سابقة
                 direct_msg_id = context.user_data.get('direct_status_msg_id')
                 if direct_msg_id:
                     try: await context.bot.delete_message(chat_id=chat_id, message_id=direct_msg_id)
@@ -129,7 +148,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 except TelegramError:
                     pass
             else:
-                # دفعة مستمرة: تحديث رسالة الحالة الموحدة للدفعة
                 direct_msg_id = context.user_data.get('direct_status_msg_id')
                 if direct_msg_id:
                     text = f"⏳ *جاري التحليل...*\n📦 في الطابور: `{queue_size_before}`"
@@ -137,14 +155,12 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                         await context.bot.edit_message_text(chat_id=chat_id, message_id=direct_msg_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
                         job.status_message_id = direct_msg_id
                     except Exception:
-                        # If edit fails, create new
                         try:
                             status_msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
                             job.status_message_id = status_msg.message_id
                             context.user_data['direct_status_msg_id'] = status_msg.message_id
                         except: pass
                 else:
-                    # Fallback just in case
                     try: await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
                     except: pass
 

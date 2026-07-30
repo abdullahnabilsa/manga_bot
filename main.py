@@ -12,6 +12,7 @@ from telegram.constants import ParseMode
 from utils.markdown_escaper import escape_markdown_v2
 
 from config.settings import Settings
+from core.database import Database
 from core.job_manager import JobManager
 from core.queue_manager import AsyncSingleWorkerQueue
 from core.user_settings_manager import UserSettingsManager
@@ -37,24 +38,41 @@ settings = Settings()
 logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("manga_bot.main")
 
+# تهيئة المحركات الأساسية
+db = Database(db_path="manga_bot.db")
 queue_manager = AsyncSingleWorkerQueue(max_size=settings.queue_max_size)
-job_manager = JobManager(queue_manager, max_running_jobs=settings.max_running_jobs, post_job_delay=settings.post_job_delay_seconds)
+
+# تهيئة مزود الذكاء الاصطناعي مع إعدادات قاطع الدائرة
+ai_provider = GeminiProvider(
+    timeout=settings.ai_timeout_seconds, 
+    cb_threshold=settings.cb_failure_threshold, 
+    cb_cooldown=settings.cb_cooldown_seconds
+)
+
+# تهيئة مدير المهام مع إعدادات العدالة والضغط الخلفي
+job_manager = JobManager(
+    queue_manager, 
+    max_running_jobs=settings.max_running_jobs, 
+    max_jobs_per_user=settings.max_jobs_per_user,
+    post_job_delay=settings.post_job_delay_seconds
+)
+
 batch_manager = BatchManager()
-settings_manager = UserSettingsManager(file_path="users_data.json")
-ai_provider = GeminiProvider(timeout=settings.ai_timeout_seconds)
 telegram_renderer = TelegramRenderer()
 
-persona_registry = PersonaRegistry(modules_dir="modules")
-api_key_manager = APIKeyManager(file_path="api_keys.json")
-access_manager = AccessManager(file_path="access_control.json", super_admin_id=settings.super_admin_id)
+# Managers سيتم تهيئتهم بعد الإتصال بقاعدة البيانات في post_init
+settings_manager: UserSettingsManager = None
+persona_registry: PersonaRegistry = None
+api_key_manager: APIKeyManager = None
+access_manager: AccessManager = None
 
 async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user: return
     user_id = update.effective_user.id
     
-    if access_manager.is_authorized(user_id): return
+    if await access_manager.is_authorized(user_id): return
 
-    if access_manager.is_join_requests_open():
+    if await access_manager.is_join_requests_open():
         if update.message and update.message.text and update.message.text.startswith("/start"):
             user = update.effective_user
             try:
@@ -72,7 +90,8 @@ async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE
                  InlineKeyboardButton("❌ رفض", callback_data=f"reject_req:{user_id}")]
             ])
             
-            for admin_id in access_manager.get_admins():
+            admins = await access_manager.get_admins()
+            for admin_id in admins:
                 try: await context.bot.send_message(chat_id=int(admin_id), text=text_to_admins, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
                 except Exception as e: logger.warning(f"Could not send join request to admin {admin_id}: {e}")
     
@@ -132,7 +151,18 @@ async def session_guard_middleware(update: Update, context: ContextTypes.DEFAULT
     raise ApplicationHandlerStop
 
 async def post_init(app: Application) -> None:
+    global settings_manager, persona_registry, api_key_manager, access_manager
+    
     bot = app.bot
+    
+    # 1. تهيئة قاعدة البيانات (اتصال مستمر و WAL mode)
+    await db.connect()
+    
+    # 2. تهيئة الـ Managers باستخدام قاعدة البيانات
+    access_manager = AccessManager(db=db, super_admin_id=settings.super_admin_id)
+    api_key_manager = APIKeyManager(db=db)
+    settings_manager = UserSettingsManager(db=db)
+    persona_registry = PersonaRegistry(modules_dir="modules")
     
     public_commands = [
         BotCommand("start", "بدء استخدام البوت"), BotCommand("settings", "فتح الإعدادات"),
@@ -151,7 +181,8 @@ async def post_init(app: Application) -> None:
         BotCommand("addadmin", "👑 ترقية لمشرف"), BotCommand("removeadmin", "📉 إزالة مشرف"),
     ]
     
-    for admin_id in access_manager.get_admins():
+    admins = await access_manager.get_admins()
+    for admin_id in admins:
         try:
             cmds = super_admin_commands if access_manager.is_super_admin(int(admin_id)) else admin_commands
             await bot.set_my_commands(cmds, scope=BotCommandScopeChat(chat_id=int(admin_id)))
@@ -165,6 +196,8 @@ async def post_init(app: Application) -> None:
         queue_manager=queue_manager
     )
     
+    # 3. تسجيل الكائنات في bot_data
+    app.bot_data["db"] = db
     app.bot_data["job_manager"] = job_manager
     app.bot_data["queue_manager"] = queue_manager
     app.bot_data["settings_manager"] = settings_manager
@@ -174,15 +207,19 @@ async def post_init(app: Application) -> None:
     app.bot_data["access_manager"] = access_manager
     app.bot_data["pipeline"] = pipeline
 
+    # 4. تشغيل البوت
     await pipeline.register(job_manager)
     await job_manager.start()
 
 async def post_shutdown(app: Application) -> None:
+    # إيقاف العمال وإغلاق اتصال قاعدة البيانات بأمان
     await job_manager.stop()
+    await db.close()
 
 def main() -> None:
     app = ApplicationBuilder().token(settings.telegram_bot_token).post_init(post_init).post_shutdown(post_shutdown).build()
 
+    # الـ Middlewares (حراس البوابات)
     app.add_handler(TypeHandler(Update, firewall_middleware), group=-3)
     app.add_handler(TypeHandler(Update, state_purge_middleware), group=-2)
     app.add_handler(TypeHandler(Update, session_guard_middleware), group=-1)

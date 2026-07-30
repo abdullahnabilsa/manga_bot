@@ -1,102 +1,70 @@
 # File: core/access_manager.py
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
-import os
 from typing import List
+from core.database import Database
 
 logger = logging.getLogger(__name__)
 
 class AccessManager:
-    """Manages access control hierarchy and join requests."""
+    """Manages access control hierarchy and join requests via SQLite."""
     
-    def __init__(self, file_path: str = "access_control.json", super_admin_id: str = "7203463194") -> None:
-        self._file_path = file_path
+    def __init__(self, db: Database, super_admin_id: str = "7203463194") -> None:
+        self._db = db
         self._super_admin_id = str(super_admin_id)
-        self._lock = asyncio.Lock()
-        self._data = {
-            "admins": [],
-            "users": [],
-            "join_requests_open": False
-        }
-        self._load_data()
-
-    def _load_data(self) -> None:
-        if os.path.exists(self._file_path):
-            try:
-                with open(self._file_path, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                    self._data["admins"] = loaded.get("admins", [])
-                    self._data["users"] = loaded.get("users", [])
-                    self._data["join_requests_open"] = loaded.get("join_requests_open", False)
-            except Exception as e:
-                logger.error(f"Failed to load access control: {e}")
-        self._save_data_sync()
-
-    def _save_data_sync(self) -> None:
-        with open(self._file_path, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, indent=4)
 
     def is_super_admin(self, user_id: int) -> bool:
         return str(user_id) == self._super_admin_id
 
-    def is_admin(self, user_id: int) -> bool:
-        return self.is_super_admin(user_id) or str(user_id) in self._data["admins"]
+    async def is_admin(self, user_id: int) -> bool:
+        if self.is_super_admin(user_id): return True
+        row = await self._db.fetchone("SELECT 1 FROM users_access WHERE user_id = ? AND role = 'admin'", (user_id,))
+        return row is not None
 
-    def is_authorized(self, user_id: int) -> bool:
-        return self.is_admin(user_id) or str(user_id) in self._data["users"]
+    async def is_authorized(self, user_id: int) -> bool:
+        if self.is_super_admin(user_id): return True
+        row = await self._db.fetchone("SELECT 1 FROM users_access WHERE user_id = ?", (user_id,))
+        return row is not None
 
-    def is_join_requests_open(self) -> bool:
-        return self._data.get("join_requests_open", False)
+    async def is_join_requests_open(self) -> bool:
+        row = await self._db.fetchone("SELECT value FROM meta WHERE key = 'join_requests_open'")
+        return row is not None and row[0] == 'true'
 
     async def set_join_requests(self, status: bool) -> None:
-        async with self._lock:
-            self._data["join_requests_open"] = status
-            self._save_data_sync()
+        val = 'true' if status else 'false'
+        await self._db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('join_requests_open', ?)", (val,))
 
     async def add_user(self, user_id: int) -> bool:
-        async with self._lock:
-            uid = str(user_id)
-            if uid not in self._data["users"] and not self.is_admin(user_id):
-                self._data["users"].append(uid)
-                self._save_data_sync()
-                return True
-            return False
+        if self.is_super_admin(user_id): return False
+        existing = await self._db.fetchone("SELECT role FROM users_access WHERE user_id = ?", (user_id,))
+        if existing: return False
+        await self._db.execute("INSERT INTO users_access (user_id, role) VALUES (?, 'user')", (user_id,))
+        return True
 
     async def remove_user(self, user_id: int) -> bool:
-        async with self._lock:
-            uid = str(user_id)
-            if uid in self._data["users"]:
-                self._data["users"].remove(uid)
-                self._save_data_sync()
-                return True
-            return False
+        if self.is_super_admin(user_id): return False
+        existing = await self._db.fetchone("SELECT 1 FROM users_access WHERE user_id = ? AND role = 'user'", (user_id,))
+        if not existing: return False
+        await self._db.execute("DELETE FROM users_access WHERE user_id = ? AND role = 'user'", (user_id,))
+        return True
 
     async def add_admin(self, user_id: int) -> bool:
-        async with self._lock:
-            uid = str(user_id)
-            if uid != self._super_admin_id and uid not in self._data["admins"]:
-                self._data["admins"].append(uid)
-                if uid in self._data["users"]: self._data["users"].remove(uid)
-                self._save_data_sync()
-                return True
-            return False
+        if self.is_super_admin(user_id): return False
+        await self._db.execute("INSERT OR REPLACE INTO users_access (user_id, role) VALUES (?, 'admin')", (user_id,))
+        return True
 
     async def remove_admin(self, user_id: int) -> bool:
-        async with self._lock:
-            uid = str(user_id)
-            if uid == self._super_admin_id:
-                return False
-            if uid in self._data["admins"]:
-                self._data["admins"].remove(uid)
-                self._save_data_sync()
-                return True
-            return False
+        if self.is_super_admin(user_id): return False
+        existing = await self._db.fetchone("SELECT 1 FROM users_access WHERE user_id = ? AND role = 'admin'", (user_id,))
+        if not existing: return False
+        await self._db.execute("DELETE FROM users_access WHERE user_id = ? AND role = 'admin'", (user_id,))
+        return True
 
-    def get_admins(self) -> List[str]:
-        return [self._super_admin_id] + self._data["admins"]
+    async def get_admins(self) -> List[str]:
+        rows = await self._db.fetchall("SELECT user_id FROM users_access WHERE role = 'admin'")
+        return [self._super_admin_id] + [str(row[0]) for row in rows]
 
-    def get_users(self) -> List[str]:
-        return self._data["users"]
+    async def get_users(self) -> List[str]:
+        rows = await self._db.fetchall("SELECT user_id FROM users_access WHERE role = 'user'")
+        return [str(row[0]) for row in rows]
