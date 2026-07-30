@@ -2,23 +2,23 @@
 from __future__ import annotations
 
 import aiosqlite
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
 
 class Database:
-    """Asynchronous SQLite database wrapper with Persistent Connection and WAL mode."""
+    """Asynchronous SQLite database wrapper with Persistent Connection, WAL mode, and Locking."""
     
     def __init__(self, db_path: str = "manga_bot.db"):
         self.db_path = db_path
         self._conn: aiosqlite.Connection | None = None
+        self._lock = asyncio.Lock()  # <--- حماية الاتصال من التضارب
 
     async def connect(self) -> None:
         """Establish a persistent database connection and optimize settings."""
         self._conn = await aiosqlite.connect(self.db_path)
-        # تفعيل وضع WAL للسماح بالقراءة والكتابة المتزامنة بدون تأخير
         await self._conn.execute("PRAGMA journal_mode=WAL;")
-        # تسريع عمليات الكتابة على القرص
         await self._conn.execute("PRAGMA synchronous=NORMAL;")
         await self.init_db()
         logger.info("Database connected successfully with WAL mode.")
@@ -61,13 +61,16 @@ class Database:
         await self._conn.commit()
 
     async def execute(self, query: str, params: tuple = ()) -> None:
-        await self._conn.execute(query, params)
-        await self._conn.commit()
+        async with self._lock:
+            await self._conn.execute(query, params)
+            await self._conn.commit()
 
     async def fetchone(self, query: str, params: tuple = ()):
-        async with self._conn.execute(query, params) as cursor:
-            return await cursor.fetchone()
+        async with self._lock:
+            async with self._conn.execute(query, params) as cursor:
+                return await cursor.fetchone()
 
     async def fetchall(self, query: str, params: tuple = ()):
-        async with self._conn.execute(query, params) as cursor:
-            return await cursor.fetchall()
+        async with self._lock:
+            async with self._conn.execute(query, params) as cursor:
+                return await cursor.fetchall()

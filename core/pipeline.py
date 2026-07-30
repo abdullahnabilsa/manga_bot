@@ -17,6 +17,7 @@ from utils.markdown_escaper import escape_markdown_v2
 from models.page_job import PageJob, MessagePayload
 from core.senders.direct_sender import DirectSender
 from core.senders.session_sender import SessionSender
+from ai.gemini_provider import ServiceUnavailableError
 
 logger = logging.getLogger("manga_bot.pipeline")
 
@@ -28,7 +29,18 @@ class BotErrorNotifier:
     def __init__(self, bot):
         self._bot = bot
 
-    async def notify(self, job: PageJob, error_msg: str) -> None:
+    async def notify(self, job: PageJob, error: Exception) -> None:
+        if isinstance(error, ServiceUnavailableError):
+            text = "🚨 *الخدمة تحت الصيانة مؤقتاً\\.*\nخوادم الذكاء الاصطناعي تواجه ضغطاً شديداً حالياً\\. يرجى الانتظار دقيقة وإعادة المحاولة\\."
+            try:
+                await self._bot.send_message(chat_id=job.chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+                if job.status_message_id:
+                    await self._bot.delete_message(chat_id=job.chat_id, message_id=job.status_message_id)
+                    job.status_message_id = None
+            except Exception as e:
+                logger.error(f"Failed to send maintenance notification: {e}")
+            return
+
         text = f"❌ *فشلت المعالجة*\n🖼️ الملف: `{escape_markdown_v2(job.file_name)}`\n⚠️ لم يتمكن النظام من ترجمة هذه الصفحة\\.\n_يرجى المحاولة مرة أخرى لاحقاً._"
         try:
             if job.status_message_id:
@@ -94,26 +106,18 @@ class BotPipeline:
         except Exception: pass
 
     def _optimize_image(self, image_bytes: bytes) -> bytes:
-        """ضغط وتصغير الصورة لتسريع النقل وتقليل استهلاك الرام."""
         try:
             img = Image.open(io.BytesIO(image_bytes))
-            
-            # تحويل الصورة إلى RGB إذا كانت تحتوي على قناة شفافية (RGBA) أو متجه ألوان (P)
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
-                
-            # تصغير الصورة إذا تجاوزت 1280 بكسل (كافٍ جداً للذكاء الاصطناعي)
             max_size = 1280
             if max(img.width, img.height) > max_size:
                 ratio = max_size / max(img.width, img.height)
                 new_size = (int(img.width * ratio), int(img.height * ratio))
                 img = img.resize(new_size, Image.Resampling.LANCZOS)
-                
-            # حفظ الصورة بصيغة JPEG بجودة 85%
             buffer = io.BytesIO()
             img.save(buffer, format="JPEG", quality=85, optimize=True)
             return buffer.getvalue()
-            
         except Exception as e:
             logger.warning(f"Image optimization failed, using original: {e}")
             return image_bytes
@@ -136,7 +140,6 @@ class BotPipeline:
                 logger.error(f"JobID={job.job_id} | Failed to download image: {e}")
                 raise RuntimeError(f"Failed to download image file: {e}")
 
-        # --- تحسين الصورة قبل الإرسال للذكاء الاصطناعي ---
         if job.image_bytes:
             job.image_bytes = self._optimize_image(job.image_bytes)
 
@@ -147,7 +150,8 @@ class BotPipeline:
         handler = self.persona_registry.get_handler(persona_name)
         prompt_text = handler.prompt
         
-        api_keys = self.api_key_manager.get_keys_for_user(job.user_id)
+        # --- تم تصحيح الخطأ هنا بإضافة await ---
+        api_keys = await self.api_key_manager.get_keys_for_user(job.user_id)
         if not api_keys:
             env_key = self._settings.ai_api_key
             if env_key: api_keys = [env_key]

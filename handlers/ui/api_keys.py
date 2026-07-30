@@ -13,7 +13,7 @@ async def api_key_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     query = update.callback_query
     await query.answer()
     api_key_manager = context.bot_data["api_key_manager"]
-    user_key = await api_key_manager.get_user_key(query.from_user.id)
+    user_key = await api_key_manager.get_user_key(query.from_user.id)  # <--- تم التصحيح
     
     text = "🔐 *إدارة مفتاح API الخاص*\n\n"
     if user_key:
@@ -22,7 +22,7 @@ async def api_key_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         text += "مفتاحك يُستخدم حصرياً لترجماتك لضمان أقصى سرعة ممكنة\\.\n"
         text += "إذا أردت العودة لاستخدام المفاتيح العامة للبوت، يمكنك حذف مفتاحك\\."
     else:
-        public_keys = await api_key_manager.get_public_keys()
+        public_keys = await api_key_manager.get_public_keys()  # <--- تم التصحيح
         text += f"🌐 *حالتك الحالية:* تستخدم المفاتيح العامة للبوت \\({len(public_keys)} مفتاح متاح\\)\\.\n\n"
         text += "يمكنك إضافة مفتاح API الخاص بك من Google AI Studio لضمان استقرار الترجمة وعدم التأثر بازدحام المستخدمين الآخرين\\."
         
@@ -38,7 +38,6 @@ async def api_key_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def add_user_api_key_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    # إذا وصلنا هنا، الـ state_purge_middleware قد قام بتنظيف أي حالة سابقة بالفعل
     context.user_data['awaiting_user_api_key'] = True
     await query.edit_message_text("🔑 *إضافة مفتاح API*\n\nأرسل مفتاح الـ API الخاص بك الآن كرسالة نصية واحدة\\.\n\n_سيتم حفظه بأمان واستخدامه حصرياً لحسابك\\._", parse_mode=ParseMode.MARKDOWN_V2)
 
@@ -46,14 +45,14 @@ async def receive_user_api_key(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data['awaiting_user_api_key'] = False
     key = update.message.text.strip()
     api_key_manager = context.bot_data["api_key_manager"]
-    await api_key_manager.set_user_key(update.effective_user.id, key)
+    await api_key_manager.set_user_key(update.effective_user.id, key)  # <--- تم التصحيح
     await update.message.reply_text("✅ *تم الحفظ بنجاح\\!*\nتم تفعيل مفتاحك الخاص\\. سيتم استخدامه في ترجماتك القادمة فوراً\\.", parse_mode=ParseMode.MARKDOWN_V2)
 
 async def del_user_api_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     api_key_manager = context.bot_data["api_key_manager"]
-    removed = await api_key_manager.remove_user_key(query.from_user.id)
+    removed = await api_key_manager.remove_user_key(query.from_user.id)  # <--- تم التصحيح
     if removed:
         await query.edit_message_text("🗑️ *تم الحذف\\.*\nتم حذف مفتاحك الخاص\\. ستعود الآن لاستخدام المفاتيح العامة للبوت تلقائياً\\.", parse_mode=ParseMode.MARKDOWN_V2)
     else:

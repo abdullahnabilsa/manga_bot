@@ -38,29 +38,22 @@ settings = Settings()
 logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("manga_bot.main")
 
-# تهيئة المحركات الأساسية
 db = Database(db_path="manga_bot.db")
 queue_manager = AsyncSingleWorkerQueue(max_size=settings.queue_max_size)
-
-# تهيئة مزود الذكاء الاصطناعي مع إعدادات قاطع الدائرة
-ai_provider = GeminiProvider(
-    timeout=settings.ai_timeout_seconds, 
-    cb_threshold=settings.cb_failure_threshold, 
-    cb_cooldown=settings.cb_cooldown_seconds
-)
-
-# تهيئة مدير المهام مع إعدادات العدالة والضغط الخلفي
 job_manager = JobManager(
     queue_manager, 
     max_running_jobs=settings.max_running_jobs, 
     max_jobs_per_user=settings.max_jobs_per_user,
     post_job_delay=settings.post_job_delay_seconds
 )
-
 batch_manager = BatchManager()
+ai_provider = GeminiProvider(
+    timeout=settings.ai_timeout_seconds, 
+    cb_threshold=settings.cb_failure_threshold, 
+    cb_cooldown=settings.cb_cooldown_seconds
+)
 telegram_renderer = TelegramRenderer()
 
-# Managers سيتم تهيئتهم بعد الإتصال بقاعدة البيانات في post_init
 settings_manager: UserSettingsManager = None
 persona_registry: PersonaRegistry = None
 api_key_manager: APIKeyManager = None
@@ -155,10 +148,9 @@ async def post_init(app: Application) -> None:
     
     bot = app.bot
     
-    # 1. تهيئة قاعدة البيانات (اتصال مستمر و WAL mode)
+    # 1. تهيئة قاعدة البيانات (تم تصحيح اسم الدالة)
     await db.connect()
     
-    # 2. تهيئة الـ Managers باستخدام قاعدة البيانات
     access_manager = AccessManager(db=db, super_admin_id=settings.super_admin_id)
     api_key_manager = APIKeyManager(db=db)
     settings_manager = UserSettingsManager(db=db)
@@ -196,7 +188,6 @@ async def post_init(app: Application) -> None:
         queue_manager=queue_manager
     )
     
-    # 3. تسجيل الكائنات في bot_data
     app.bot_data["db"] = db
     app.bot_data["job_manager"] = job_manager
     app.bot_data["queue_manager"] = queue_manager
@@ -207,19 +198,17 @@ async def post_init(app: Application) -> None:
     app.bot_data["access_manager"] = access_manager
     app.bot_data["pipeline"] = pipeline
 
-    # 4. تشغيل البوت
     await pipeline.register(job_manager)
     await job_manager.start()
 
 async def post_shutdown(app: Application) -> None:
-    # إيقاف العمال وإغلاق اتصال قاعدة البيانات بأمان
     await job_manager.stop()
-    await db.close()
+    if 'db' in app.bot_data:
+        await app.bot_data['db'].close()
 
 def main() -> None:
     app = ApplicationBuilder().token(settings.telegram_bot_token).post_init(post_init).post_shutdown(post_shutdown).build()
 
-    # الـ Middlewares (حراس البوابات)
     app.add_handler(TypeHandler(Update, firewall_middleware), group=-3)
     app.add_handler(TypeHandler(Update, state_purge_middleware), group=-2)
     app.add_handler(TypeHandler(Update, session_guard_middleware), group=-1)

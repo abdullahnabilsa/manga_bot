@@ -7,7 +7,7 @@ from utils.markdown_escaper import escape_markdown_v2
 
 async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     access_manager = context.bot_data["access_manager"]
-    is_adm = access_manager.is_admin(update.effective_user.id)
+    is_adm = await access_manager.is_admin(update.effective_user.id)
     if not is_adm:
         if update.message:
             await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.", parse_mode=ParseMode.MARKDOWN_V2)
@@ -17,7 +17,6 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
 
 async def add_public_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await is_admin(update, context): return
-    # إذا وصلنا هنا، الـ state_purge_middleware قد قام بتنظيف أي حالة سابقة بالفعل
     context.user_data['awaiting_admin_api_key'] = True
     await update.message.reply_text("👑 *إضافة مفتاح عام*\nأرسل مفتاح الـ API العام الآن ليتم إضافته للبوت\\.", parse_mode=ParseMode.MARKDOWN_V2)
 
@@ -34,7 +33,7 @@ async def receive_admin_api_key(update: Update, context: ContextTypes.DEFAULT_TY
 async def list_public_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await is_admin(update, context): return
     api_key_manager = context.bot_data["api_key_manager"]
-    keys = api_key_manager.get_public_keys()
+    keys = await api_key_manager.get_public_keys()  # <--- تم التصحيح
     if not keys:
         await update.message.reply_text("📭 *لا توجد مفاتيح*\nلم يتم تسجيل أي مفاتيح عامة بعد\\.", parse_mode=ParseMode.MARKDOWN_V2)
         return
@@ -52,7 +51,7 @@ async def remove_public_key_command(update: Update, context: ContextTypes.DEFAUL
         return
     prefix = args[0]
     api_key_manager = context.bot_data["api_key_manager"]
-    keys = api_key_manager.get_public_keys()
+    keys = await api_key_manager.get_public_keys()  # <--- تم التصحيح
     found_key = None
     for k in keys:
         if k.startswith(prefix):
