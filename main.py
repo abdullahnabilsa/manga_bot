@@ -26,7 +26,7 @@ from renderer.telegram_renderer import TelegramRenderer
 
 from handlers.ui.start import start_command, help_command
 from handlers.ui.settings import settings_command, settings_callback
-from handlers.ui.session import start_session_command, end_session_command
+from handlers.ui.session import start_session_command, end_session_command, cancel_command
 from handlers.ui.admin import add_public_key_command, list_public_keys_command, remove_public_key_command
 from handlers.ui.access import (
     add_user_command, remove_user_command, add_admin_command, remove_admin_command, 
@@ -101,29 +101,9 @@ async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_T
             
         msg = update.message
         
-        # المخرج المخصص للطوارئ: الخروج من وضعية الجلسة واسم الملف عند إرسال /cancel
+        # السماح لأمر /cancel بالمرور لمعالجه الخاص به
         if msg and msg.text == "/cancel":
-            user_id = update.effective_user.id
-            context.user_data['awaiting_session_filename'] = False
-            await batch_manager.set_finalizing(user_id, False)
-            await batch_manager.clear_session(user_id)
-            
-            # حذف رسالة طلب الاسم
-            prompt_msg_id = await batch_manager.get_prompt_message_id(user_id)
-            if prompt_msg_id:
-                try: await context.bot.delete_message(chat_id=msg.chat_id, message_id=prompt_msg_id)
-                except: pass
-                
-            # إرسال تأكيد الإلغاء
-            try: 
-                await context.bot.send_message(chat_id=msg.chat_id, text="🚪 *تم إلغاء العملية والخروج من الجلسة بنجاح\\.*", parse_mode=ParseMode.MARKDOWN_V2)
-            except: pass
-            
-            # حذف رسالة /cancel التي أرسلها المستخدم
-            try: await msg.delete()
-            except: pass
-            
-            raise ApplicationHandlerStop
+            return
             
         # تحديد رسائل النظام والأزرار الثابتة
         persistent_buttons = ["⚙️ الإعدادات", "📖 المساعدة", "🟢 بدء الجلسة", "🔴 إنهاء الجلسة"]
@@ -179,7 +159,8 @@ async def session_guard_middleware(update: Update, context: ContextTypes.DEFAULT
     if update.message and (update.message.photo or (update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('image/'))):
         return
 
-    if update.message and update.message.text in ["/end_session", "🔴 إنهاء الجلسة"]:
+    # السماح لأمر /cancel و زر إنهاء الجلسة بالمرور
+    if update.message and update.message.text in ["/end_session", "🔴 إنهاء الجلسة", "/cancel"]:
         return
 
     if update.message:
@@ -205,7 +186,7 @@ async def post_init(app: Application) -> None:
     public_commands = [
         BotCommand("start", "بدء استخدام البوت"), BotCommand("settings", "فتح الإعدادات"),
         BotCommand("help", "دليل الاستخدام"), BotCommand("start_session", "بدء الجلسة"),
-        BotCommand("end_session", "إنهاء الجلسة")
+        BotCommand("end_session", "إنهاء الجلسة"), BotCommand("cancel", "إلغاء الجلسة والخروج")
     ]
     await bot.set_my_commands(public_commands)
     
@@ -264,6 +245,7 @@ def main() -> None:
     app.add_handler(CommandHandler("settings", settings_command))
     app.add_handler(CommandHandler("start_session", start_session_command))
     app.add_handler(CommandHandler("end_session", end_session_command))
+    app.add_handler(CommandHandler("cancel", cancel_command))  # <--- تسجيل أمر الإلغاء
     
     app.add_handler(CommandHandler("addkey", add_public_key_command))
     app.add_handler(CommandHandler("listkeys", list_public_keys_command))

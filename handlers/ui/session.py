@@ -28,8 +28,9 @@ async def start_session_command(update: Update, context: ContextTypes.DEFAULT_TY
         "🎬 *تم تفعيل وضع الجلسة بنجاح\\!*\n\n"
         "في هذا الوضع، تم تفعيل *الحماية القصوى* لمنع التشتت:\n"
         "• سيتم قبول *صور المانغا فقط*\\.\n"
-        "• سيتم *حذف* أي رسالة نصية، ملصق، أو أمر \\(مثل الإعدادات\\) فوراً\\.\n\n"
-        "⚠️ *للخروج من هذا الوضع وتجميع الملفات:* اضغط زر *🔴 إنهاء الجلسة*\\."
+        "• سيتم *حذف* أي رسالة نصية، ملصق، أو أمر فوراً\\.\n\n"
+        "⚠️ *للخروج من هذا الوضع وتجميع الملفات:* اضغط زر *🔴 إنهاء الجلسة*\\.\n"
+        "🚪 _لإلغاء الجلسة بالكامل في أي وقت، أرسل: /cancel_"
     )
     await update.message.reply_text(text=text, parse_mode=ParseMode.MARKDOWN_V2)
 
@@ -51,7 +52,6 @@ async def end_session_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await batch_manager.set_finalizing(user_id, True)
     context.user_data['awaiting_session_filename'] = True
     
-    # تم إضافة أمر الإلغاء /cancel كخروج طوارئ مخصص
     text = (
         "📝 *تسمية ملف الترجمة*\n\n"
         "يرجى إرسال الاسم الذي تريد حفظ ملف الترجمة به الآن\\.\n\n"
@@ -64,10 +64,42 @@ async def end_session_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await batch_manager.set_prompt_message_id(user_id, prompt_msg.message_id)
     except Exception as e:
         logger.error(f"Failed to send filename prompt: {e}")
-        # فشل آمن: إذا فشل الإرسال، نلغي الحالة لمنع تجميد البوت
         context.user_data['awaiting_session_filename'] = False
         await batch_manager.set_finalizing(user_id, False)
         await update.message.reply_text("⚠️ حدث خطأ فني، يرجى المحاولة مرة أخرى\\.", parse_mode=ParseMode.MARKDOWN_V2)
+
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """معالج موحد لإلغاء الجلسة في أي مرحلة."""
+    batch_manager = context.bot_data["batch_manager"]
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    is_active = await batch_manager.is_session_active(user_id)
+    is_finalizing = await batch_manager.is_finalizing(user_id)
+    
+    if not is_active and not is_finalizing and not context.user_data.get('awaiting_session_filename'):
+        try: await update.message.delete()
+        except: pass
+        return
+            
+    # تنظيف جميع الحالات
+    context.user_data['awaiting_session_filename'] = False
+    await batch_manager.set_finalizing(user_id, False)
+    await batch_manager.clear_session(user_id)
+    
+    # حذف رسالة طلب الاسم إن وُجدت
+    prompt_msg_id = await batch_manager.get_prompt_message_id(user_id)
+    if prompt_msg_id:
+        try: await context.bot.delete_message(chat_id=chat_id, message_id=prompt_msg_id)
+        except: pass
+        
+    try: 
+        await context.bot.send_message(chat_id=chat_id, text="🚪 *تم إلغاء العملية والخروج من الجلسة بنجاح\\.*", parse_mode=ParseMode.MARKDOWN_V2)
+    except: pass
+    
+    # حذف رسالة /cancel التي أرسلها المستخدم
+    try: await update.message.delete()
+    except: pass
 
 async def receive_session_filename(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     batch_manager = context.bot_data["batch_manager"]
