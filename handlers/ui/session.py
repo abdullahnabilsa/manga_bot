@@ -51,11 +51,12 @@ async def end_session_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await batch_manager.set_finalizing(user_id, True)
     context.user_data['awaiting_session_filename'] = True
     
-    # تم إصلاح تخطي الرموز هنا لمنع خطأ تيليجرام
+    # تم إضافة أمر الإلغاء /cancel كخروج طوارئ مخصص
     text = (
         "📝 *تسمية ملف الترجمة*\n\n"
         "يرجى إرسال الاسم الذي تريد حفظ ملف الترجمة به الآن\\.\n\n"
-        "⚠️ _ملاحظة: تم إيقاف استقبال الصور حتى نهاية التجميع\\._"
+        "⚠️ _ملاحظة: تم إيقاف استقبال الصور حتى نهاية التجميع\\._\n\n"
+        "🚪 _لإلغاء العملية والخروج، أرسل الأمر: /cancel_"
     )
     
     try:

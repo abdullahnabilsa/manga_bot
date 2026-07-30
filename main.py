@@ -96,16 +96,34 @@ async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_T
     if context.user_data.get('awaiting_session_filename'):
         # منع أزرار الإعدادات (Inline Keyboards)
         if update.callback_query:
-            await update.callback_query.answer("📝 يرجى إرسال اسم الملف فقط كنص.", show_alert=True)
+            await update.callback_query.answer("📝 يرجى إرسال اسم الملف فقط كنص أو /cancel للإلغاء.", show_alert=True)
             raise ApplicationHandlerStop
             
         msg = update.message
         
-        # مخرج الطوارئ: فك القفل إذا أرسل /start
-        if msg and msg.text == "/start":
+        # المخرج المخصص للطوارئ: الخروج من وضعية الجلسة واسم الملف عند إرسال /cancel
+        if msg and msg.text == "/cancel":
+            user_id = update.effective_user.id
             context.user_data['awaiting_session_filename'] = False
-            await batch_manager.set_finalizing(update.effective_user.id, False)
-            return # دع أمر /start يعمل بشكل طبيعي
+            await batch_manager.set_finalizing(user_id, False)
+            await batch_manager.clear_session(user_id)
+            
+            # حذف رسالة طلب الاسم
+            prompt_msg_id = await batch_manager.get_prompt_message_id(user_id)
+            if prompt_msg_id:
+                try: await context.bot.delete_message(chat_id=msg.chat_id, message_id=prompt_msg_id)
+                except: pass
+                
+            # إرسال تأكيد الإلغاء
+            try: 
+                await context.bot.send_message(chat_id=msg.chat_id, text="🚪 *تم إلغاء العملية والخروج من الجلسة بنجاح\\.*", parse_mode=ParseMode.MARKDOWN_V2)
+            except: pass
+            
+            # حذف رسالة /cancel التي أرسلها المستخدم
+            try: await msg.delete()
+            except: pass
+            
+            raise ApplicationHandlerStop
             
         # تحديد رسائل النظام والأزرار الثابتة
         persistent_buttons = ["⚙️ الإعدادات", "📖 المساعدة", "🟢 بدء الجلسة", "🔴 إنهاء الجلسة"]
@@ -125,7 +143,7 @@ async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_T
             await receive_session_filename(update, context)
             raise ApplicationHandlerStop
             
-        # أي شيء آخر (أوامر، أزرار ثابتة، صور، ملصقات، ملفات) -> حذف فوري وصامت
+        # أي شيء آخر (أوامر أخرى غير /cancel، أزرار ثابتة، صور، ملصقات، ملفات) -> حذف فوري وصامت
         if msg:
             try: 
                 await msg.delete()
