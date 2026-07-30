@@ -33,6 +33,7 @@ from handlers.ui.access import (
     list_users_command, open_requests_command, close_requests_command, handle_request_callback
 )
 from handlers.messages import handle_image, handle_text
+from handlers.ui.session import receive_session_filename  # <--- استيراد مباشر للاعتراض
 
 settings = Settings()
 logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
@@ -93,57 +94,34 @@ async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     is_command = update.message and update.message.text and update.message.text.startswith('/')
     is_callback = update.callback_query is not None
-    is_end_session = update.message and update.message.text in ["/end_session", "🔴 إنهاء الجلسة"]
-    is_persistent_btn = update.message and update.message.text in ["⚙️ الإعدادات", "📖 المساعدة", "🟢 بدء الجلسة", "🔴 إنهاء الجلسة"]
     is_media = update.message and (update.message.photo or (update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('image/')))
     
-    # 1. حماية وضع إدخال اسم الملف (Lockdown or Skip Strategy)
+    # 1. حماية وضع إدخال اسم الملف (Input Integrity First)
     if context.user_data.get('awaiting_session_filename'):
         if is_callback:
             await update.callback_query.answer("📝 يرجى إرسال اسم الملف أولاً.", show_alert=True)
             raise ApplicationHandlerStop
             
-        # السيناريو الأول: المستخدم ضغط "إنهاء الجلسة" مرة أخرى -> يعتبر تخطياً (Skip) واستخدام اسم افتراضي
-        if is_end_session:
+        # فك القفل الآمن إذا أرسل /start (مخرج الطوارئ)
+        if update.message and update.message.text == "/start":
             context.user_data['awaiting_session_filename'] = False
-            batch_mgr = context.bot_data["batch_manager"]
-            queue_mgr = context.bot_data["queue_manager"]
+            await batch_manager.set_finalizing(update.effective_user.id, False)
+            return # دع أمر /start يعمل بشكل طبيعي
             
-            # حذف رسالة البوت (الطلب) ورسالة المستخدم (الزر)
-            try:
-                prompt_msg_id = await batch_mgr.get_prompt_message_id(update.effective_user.id)
-                if prompt_msg_id:
-                    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_msg_id)
-                await update.message.delete()
-            except Exception: pass
-            
-            # استخدام اسم افتراضي والتجميع فوراً
-            await batch_mgr.set_custom_filename(update.effective_user.id, "manga_session")
-            queue_size = await queue_mgr.size()
-            
-            if queue_size > 0:
-                await batch_mgr.set_pending_compile(update.effective_user.id)
-                await context.bot.send_message(chat_id=update.effective_chat.id, text="⏳ *تم استخدام الاسم الافتراضي\\.*\nلا تزال لديك صور قيد المعالجة\\. سيتم التجميع فور اكتمالها\\.", parse_mode=ParseMode.MARKDOWN_V2)
-            else:
-                await context.bot.send_message(chat_id=update.effective_chat.id, text="⏳ *جاري تجميع الترجمة بالاسم الافتراضي*\\.\\.\\.", parse_mode=ParseMode.MARKDOWN_V2)
-                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_DOCUMENT)
-                session_sender = context.bot_data["pipeline"].session_sender
-                await session_sender.compile_and_send(update.effective_user.id, update.effective_chat.id)
-            
+        # حظر الأوامر الأخرى (مثل /settings) والصور ومنعها من العمل
+        if (is_command and update.message.text != "/start") or is_media:
+            try: await update.message.delete()
+            except: pass
             raise ApplicationHandlerStop
             
-        # السيناريو الثاني: المستخدم أرسل أي شيء آخر (أوامر، أزرار، صور)
-        # -> نحذف رسالته ونحتفظ برسالة الطلب (يبقى مقفولاً في وضع الانتظار)
-        if is_command or is_persistent_btn or is_media:
-            try:
-                await update.message.delete()
-            except Exception: pass
+        # أي نص عادي (بما في ذلك "🔴 إنهاء الجلسة" أو "⚙️ الإعدادات")
+        # يتم اعتماده حرفياً كاسم للملف، ونعيق تنفيذ أي Handler آخر.
+        if update.message and update.message.text:
+            await receive_session_filename(update, context)
             raise ApplicationHandlerStop
-            
-        # السيناريو الثالث: أرسل نصاً عادياً -> نسمح للدالة handle_text بالتقاطه كاسم للملف
-        return
 
     # 2. التطهير الشامل لحالة انتظار الـ API Keys
+    is_persistent_btn = update.message and update.message.text in ["⚙️ الإعدادات", "📖 المساعدة", "🟢 بدء الجلسة", "🔴 إنهاء الجلسة"]
     is_system_interaction = is_command or is_callback or is_persistent_btn or is_media
     if (context.user_data.get('awaiting_admin_api_key') or context.user_data.get('awaiting_user_api_key')) and is_system_interaction:
         context.user_data['awaiting_admin_api_key'] = False
