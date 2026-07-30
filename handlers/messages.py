@@ -23,6 +23,9 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     image_file_id: Optional[str] = None
     file_name: Optional[str] = None
     
+    # التحقق من حالة الجلسة مبكراً لاستخدامها في فلترة الملفات غير المدعومة
+    is_session_active = await batch_manager.is_session_active(user.id)
+    
     # الاستجابة الفورية: التقاط file_id فقط دون تحميل الصورة
     if update.message.photo:
         image_file_id = update.message.photo[-1].file_id
@@ -33,8 +36,16 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             image_file_id = update.message.document.file_id
             file_name = update.message.document.file_name or f"Document_{update.message.message_id}.jpg"
         else:
-            await context.bot.send_message(chat_id=chat_id, text="🚫 *ملف غير مدعوم\\.*\nيرجى إرسال صورة بصيغة JPG أو PNG\\.", parse_mode=ParseMode.MARKDOWN_V2)
-            return
+            # وضع التركيز الإلزامي: حذف الملفات غير المدعومة بصمت أثناء الجلسة
+            if is_session_active:
+                try:
+                    await update.message.delete()
+                except Exception:
+                    pass
+                return
+            else:
+                await context.bot.send_message(chat_id=chat_id, text="🚫 *ملف غير مدعوم\\.*\nيرجى إرسال صورة بصيغة JPG أو PNG\\.", parse_mode=ParseMode.MARKDOWN_V2)
+                return
 
     if not image_file_id:
         await context.bot.send_message(chat_id=chat_id, text="⚠️ *خطأ في الاستلام\\.*\nلم أتمكن من قراءة الصورة، يرجى إعادة إرسالها\\.", parse_mode=ParseMode.MARKDOWN_V2)
@@ -45,7 +56,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         context.user_data['awaiting_session_filename'] = False
         await context.bot.send_message(chat_id=chat_id, text="↩️ *تم إلغاء انتظار الاسم وإضافة الصورة للطابور\\.\"", parse_mode=ParseMode.MARKDOWN_V2)
     
-    is_session_active = await batch_manager.is_session_active(user.id)
     queue_size_before = await queue_manager.size()
     
     # إنشاء الـ Job وإدخاله في الطابور فوراً (Queue First)
@@ -63,6 +73,8 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         current_queue = await queue_manager.size()
         translated_count = len(await batch_manager.get_session_data(user.id))
         
+        # السيناريو الثاني: دفعة جديدة بعد انتهاء السابقة (الطابور كان فارغاً).
+        # نحذف الرسالة القديمة لمنع الازدحام ونبدأ رسالة جديدة بالأسفل.
         if queue_size_before == 0 and tracker_id:
             try: 
                 await context.bot.delete_message(chat_id=chat_id, message_id=tracker_id)
@@ -72,6 +84,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             tracker_id = None
             
         if not tracker_id:
+            # رسالة البدء المباشرة (قبل بدء التحليل)
             text = (
                 f"⏳ *تم استلام الصور وجاري بدء المعالجة...*\n\n"
                 f"📊 *إحصائيات الجلسة الحالية:*\n"
@@ -84,6 +97,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await batch_manager.set_tracker(user.id, msg.message_id)
             except Exception: pass
         else:
+            # تحديث عداد الطابور فقط إذا وردت صور إضافية أثناء المعالجة
             text = (
                 f"⏳ *تم استلام صور جديدة وإضافتها للطابور...*\n\n"
                 f"📊 *إحصائيات الجلسة الحالية:*\n"
@@ -95,6 +109,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await context.bot.edit_message_text(chat_id=chat_id, message_id=tracker_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
             except Exception: pass 
     else:
+        # وضع الترجمة المباشرة (بدون جلسة)
         eta_seconds = (queue_size_before + 1) * 15
         escaped_file = escape_markdown_v2(file_name) if file_name else "Unknown"
         if queue_size_before == 0:
@@ -125,11 +140,26 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             pass
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # 1. مسارات انتظار الإدخال (أولوية قصوى)
     if context.user_data.get('awaiting_user_api_key'):
         await receive_user_api_key(update, context)
+        return
     elif context.user_data.get('awaiting_admin_api_key'):
         await receive_admin_api_key(update, context)
+        return
     elif context.user_data.get('awaiting_session_filename'):
         await receive_session_filename(update, context)
-    else:
-        await update.message.reply_text("ℹ️ *مرحباً\\!*\nيرجى إرسال صورة لترجمتها\\.\nاستخدم الأزرار بالأسفل للتحكم في البوت\\.", parse_mode=ParseMode.MARKDOWN_V2)
+        return
+
+    # 2. وضع التركيز الإلزامي أثناء الجلسة
+    batch_manager = context.bot_data["batch_manager"]
+    if await batch_manager.is_session_active(update.effective_user.id):
+        # حذف أي رسالة نصية عشوائية يرسلها المستخدم أثناء الجلسة بصمت تام
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        return
+
+    # 3. الرد الافتراضي (إذا لم يكن في جلسة)
+    await update.message.reply_text("ℹ️ *مرحباً\\!*\nيرجى إرسال صورة لترجمتها\\.\nاستخدم الأزرار بالأسفل للتحكم في البوت\\.", parse_mode=ParseMode.MARKDOWN_V2)
