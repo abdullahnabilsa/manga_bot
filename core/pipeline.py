@@ -99,6 +99,15 @@ class BotPipeline:
         if not is_session_active:
             await self.safe_edit_or_send(job, f"🔍 *جاري التحليل\\.*\n🖼️ الملف: `{escape_markdown_v2(job.file_name)}`\n⏳ الذكاء الاصطناعي يقرأ الصورة ويستخرج النصوص\\.\\.\\.")
 
+        # --- تحميل الصورة الفعلي هنا (أثناء المعالجة) ---
+        if not job.image_bytes and job.image_file_id:
+            try:
+                tg_file = await self.bot.get_file(job.image_file_id)
+                job.image_bytes = await tg_file.download_as_bytearray()
+            except Exception as e:
+                logger.error(f"JobID={job.job_id} | Failed to download image: {e}")
+                raise RuntimeError(f"Failed to download image file: {e}")
+
         persona_name = await self.settings_manager.get_persona(job.user_id)
         if not persona_name or persona_name not in self.persona_registry.get_available_personas():
             persona_name = "Default Translator"

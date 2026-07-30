@@ -40,7 +40,8 @@ class PageJob(BaseModel):
     chat_id: int
     state: JobState = JobState.WAITING
     
-    image_bytes: Optional[bytes] = None
+    image_file_id: Optional[str] = None  # <--- جديد: معرف الصورة للاستجابة الفورية
+    image_bytes: Optional[bytes] = None   # سيتم تعبئته لاحقاً أثناء المعالجة
     file_name: Optional[str] = None
     page_data: Optional[PageData] = None
     message_payloads: List[MessagePayload] = Field(default_factory=list)
