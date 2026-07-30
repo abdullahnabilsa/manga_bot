@@ -94,22 +94,28 @@ async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_T
     is_command = update.message and update.message.text and update.message.text.startswith('/')
     is_callback = update.callback_query is not None
     is_persistent_btn = update.message and update.message.text in ["⚙️ الإعدادات", "📖 المساعدة", "🟢 بدء الجلسة", "🔴 إنهاء الجلسة"]
-    is_media = update.message and (update.message.photo or (update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('image/')))
     
+    # 1. حماية وضع إدخال اسم الملف (Fail-Safe)
     if context.user_data.get('awaiting_session_filename'):
         if is_callback:
             await update.callback_query.answer("🚫 يرجى إرسال اسم الملف أولاً.", show_alert=True)
             raise ApplicationHandlerStop
             
-        if is_command or is_persistent_btn or is_media:
+        # إذا أرسل أمراً أو ضغط زر قائمة، نعتبره إلغاءً لطلب الاسم لمنع التعليق
+        if is_command or is_persistent_btn:
+            context.user_data['awaiting_session_filename'] = False
+            # محاولة حذف رسالة الطلب القديمة
             try:
-                await update.message.delete()
-            except Exception:
-                pass
-            raise ApplicationHandlerStop
+                prompt_msg_id = await batch_manager.get_prompt_message_id(update.effective_user.id)
+                if prompt_msg_id:
+                    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prompt_msg_id)
+            except Exception: pass
             
-        return
+            # السماح للأمر بالمرور (مثل /start أو 🟢 بدء الجلسة)
+            return
 
+    # 2. التطهير الشامل لحالة انتظار الـ API Keys
+    is_media = update.message and (update.message.photo or (update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('image/')))
     is_system_interaction = is_command or is_callback or is_persistent_btn or is_media
     if (context.user_data.get('awaiting_admin_api_key') or context.user_data.get('awaiting_user_api_key')) and is_system_interaction:
         context.user_data['awaiting_admin_api_key'] = False
@@ -148,7 +154,6 @@ async def post_init(app: Application) -> None:
     
     bot = app.bot
     
-    # 1. تهيئة قاعدة البيانات (تم تصحيح اسم الدالة)
     await db.connect()
     
     access_manager = AccessManager(db=db, super_admin_id=settings.super_admin_id)

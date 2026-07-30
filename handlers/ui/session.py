@@ -1,6 +1,7 @@
 # File: handlers/ui/session.py
 from __future__ import annotations
 import asyncio
+import logging
 from telegram import Update, InputFile
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode, ChatAction
@@ -9,13 +10,15 @@ from telegram.error import RetryAfter
 from utils.markdown_escaper import escape_markdown_v2, sanitize_filename
 from models.page_job import PageJob
 
+logger = logging.getLogger(__name__)
+
 async def start_session_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     batch_manager = context.bot_data["batch_manager"]
     settings_manager = context.bot_data["settings_manager"]
     user_id = update.effective_user.id
     
     context.user_data['awaiting_session_filename'] = False
-    await batch_manager.set_finalizing(user_id, False)  # <--- إعادة فتح الاستقبال
+    await batch_manager.set_finalizing(user_id, False)
     
     persona_name = await settings_manager.get_persona(user_id)
     if not persona_name: persona_name = "Default Translator"
@@ -45,19 +48,25 @@ async def end_session_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await batch_manager.clear_session(user_id)
         return
 
-    # --- إغلاق صمام الاستقبال فوراً ---
     await batch_manager.set_finalizing(user_id, True)
-    
     context.user_data['awaiting_session_filename'] = True
     
+    # تم إصلاح تخطي الرموز هنا لمنع خطأ تيليجرام
     text = (
         "📝 *تسمية ملف الترجمة*\n\n"
         "يرجى إرسال الاسم الذي تريد حفظ ملف الترجمة به الآن\\.\n\n"
-        "_ملاحظة: تم إيقاف استقبال الصور حتى نهاية التجميع._"
+        "⚠️ _ملاحظة: تم إيقاف استقبال الصور حتى نهاية التجميع\\._"
     )
     
-    prompt_msg = await update.message.reply_text(text=text, parse_mode=ParseMode.MARKDOWN_V2)
-    await batch_manager.set_prompt_message_id(user_id, prompt_msg.message_id)
+    try:
+        prompt_msg = await update.message.reply_text(text=text, parse_mode=ParseMode.MARKDOWN_V2)
+        await batch_manager.set_prompt_message_id(user_id, prompt_msg.message_id)
+    except Exception as e:
+        logger.error(f"Failed to send filename prompt: {e}")
+        # فشل آمن: إذا فشل الإرسال، نلغي الحالة لمنع تجميد البوت
+        context.user_data['awaiting_session_filename'] = False
+        await batch_manager.set_finalizing(user_id, False)
+        await update.message.reply_text("⚠️ حدث خطأ فني، يرجى المحاولة مرة أخرى\\.", parse_mode=ParseMode.MARKDOWN_V2)
 
 async def receive_session_filename(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     batch_manager = context.bot_data["batch_manager"]
