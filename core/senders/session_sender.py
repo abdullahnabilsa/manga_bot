@@ -22,6 +22,13 @@ class SessionSender:
         self.settings_manager = pipeline.settings_manager
 
     async def process(self, job: PageJob, handler) -> PageJob:
+        # --- الحارس الجديد: منع معالجة الصور إذا تم إلغاء الجلسة ---
+        is_active = await self.batch_manager.is_session_active(job.user_id)
+        if not is_active:
+            logger.info(f"JobID={job.job_id} | User cancelled the session. Dropping queued job silently.")
+            return job
+        # -----------------------------------------------------------
+
         total_pages = await self.batch_manager.add_page_data(job.user_id, job.page_data)
         logger.info(f"JobID={job.job_id} | Added to session buffer. Total pages: {total_pages}")
         

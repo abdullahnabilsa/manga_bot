@@ -85,16 +85,24 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # تنظيف جميع الحالات
     context.user_data['awaiting_session_filename'] = False
     await batch_manager.set_finalizing(user_id, False)
-    await batch_manager.clear_session(user_id)
     
+    # حذف رسالة الـ Tracker إن وُجدت للحفاظ على نظافة الشات
+    tracker_id = await batch_manager.get_tracker(user_id)
+    if tracker_id:
+        try: await context.bot.delete_message(chat_id=chat_id, message_id=tracker_id)
+        except: pass
+        
     # حذف رسالة طلب الاسم إن وُجدت
     prompt_msg_id = await batch_manager.get_prompt_message_id(user_id)
     if prompt_msg_id:
         try: await context.bot.delete_message(chat_id=chat_id, message_id=prompt_msg_id)
         except: pass
         
+    # مسح البيانات من الذاكرة
+    await batch_manager.clear_session(user_id)
+        
     try: 
-        await context.bot.send_message(chat_id=chat_id, text="🚪 *تم إلغاء العملية والخروج من الجلسة بنجاح\\.*", parse_mode=ParseMode.MARKDOWN_V2)
+        await context.bot.send_message(chat_id=chat_id, text="🚪 *تم إلغاء العملية وحذف بيانات الجلسة بنجاح\\.*", parse_mode=ParseMode.MARKDOWN_V2)
     except: pass
     
     # حذف رسالة /cancel التي أرسلها المستخدم
