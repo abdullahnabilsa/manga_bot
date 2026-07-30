@@ -38,6 +38,7 @@ async def api_key_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def add_user_api_key_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    # إذا وصلنا هنا، الـ state_purge_middleware قد قام بتنظيف أي حالة سابقة بالفعل
     context.user_data['awaiting_user_api_key'] = True
     await query.edit_message_text("🔑 *إضافة مفتاح API*\n\nأرسل مفتاح الـ API الخاص بك الآن كرسالة نصية واحدة\\.\n\n_سيتم حفظه بأمان واستخدامه حصرياً لحسابك\\._", parse_mode=ParseMode.MARKDOWN_V2)
 
