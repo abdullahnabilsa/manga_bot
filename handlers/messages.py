@@ -98,43 +98,37 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         output_method = user_settings.get("output_method", "files_only")
         if output_method == "chat_and_files": output_method = "messages_and_files"
         
-        eta_seconds = (queue_size_before + 1) * 15
-        escaped_file = escape_markdown_v2(file_name) if file_name else "Unknown"
-        
-        # بروتوكول التسليم الصامت:
-        # إذا كان الطابور فارغاً والإخراج "رسائل فقط"، لا نرسل أي رسالة حالة.
-        if queue_size_before == 0 and output_method == "messages_only":
+        # بروتوكول "الصمت المطلق للدفعات":
+        # إذا كانت هذه هي الصورة الأولى (الطابور كان فارغاً)
+        if queue_size_before == 0:
+            if output_method == "messages_only":
+                # تسليم صامت تام للنصوص
+                try:
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                except Exception: pass
+                # job.status_message_id يبقى None
+            else:
+                # رسالة حالة واحدة فقط للدفعة الأولى
+                text = "⏳ *جاري التحليل الآن\\.\\.\\.*"
+                try:
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                    status_msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+                    job.status_message_id = status_msg.message_id
+                except RetryAfter as e:
+                    await asyncio.sleep(e.retry_after)
+                    try:
+                        status_msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+                        job.status_message_id = status_msg.message_id
+                    except Exception:
+                        pass
+                except TelegramError:
+                    pass
+        else:
+            # صور إضافية في الطابور (دُفعة) -> صامتة تماماً لمنع الفوضى
             try:
                 await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
             except Exception: pass
-            # job.status_message_id يبقى None
-        else:
-            if queue_size_before == 0:
-                text = (
-                    f"📥 *تم استلام الصورة بنجاح\\.*\n"
-                    f"🖼️ الملف: `{escaped_file}`\n"
-                    f"⏳ *جاري التحليل الآن\\.\\.\\.*"
-                )
-            else:
-                text = (
-                    f"📥 *تم استلام الصورة بنجاح\\.*\n"
-                    f"🖼️ الملف: `{escaped_file}`\n"
-                    f"⏳ *في الطابور:* مكانك الحالي {queue_size_before} \\| الوقت المتوقع: ~{eta_seconds} ثانية\\."
-                )
-            
-            try:
-                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-                status_msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-                job.status_message_id = status_msg.message_id
-            except RetryAfter as e:
-                await asyncio.sleep(e.retry_after)
-                try:
-                    status_msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-                    job.status_message_id = status_msg.message_id
-                except Exception:
-                    pass
-            except TelegramError:
-                pass
+            # job.status_message_id يبقى None ليتجاوزه الـ Pipeline والـ Sender بهدوء
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.user_data.get('awaiting_user_api_key'):
