@@ -73,6 +73,22 @@ class JobManager:
                 task = asyncio.create_task(self._worker_loop(i + 1))
                 self._worker_tasks.append(task)
 
+    async def scale_workers(self, target_count: int) -> None:
+        """Dynamically scales the number of active worker tasks."""
+        async with self._lock:
+            current_count = len(self._worker_tasks)
+            if target_count > current_count:
+                for i in range(current_count, target_count):
+                    task = asyncio.create_task(self._worker_loop(i + 1))
+                    self._worker_tasks.append(task)
+                logger.info(f"Scaled UP workers: {current_count} -> {target_count}")
+            elif target_count < current_count:
+                tasks_to_cancel = self._worker_tasks[target_count:]
+                self._worker_tasks = self._worker_tasks[:target_count]
+                for task in tasks_to_cancel:
+                    task.cancel()
+                logger.info(f"Scaled DOWN workers: {current_count} -> {target_count}")
+
     async def stop(self) -> None:
         for task in self._worker_tasks:
             task.cancel()
@@ -84,53 +100,56 @@ class JobManager:
         self._worker_tasks.clear()
 
     async def _worker_loop(self, worker_id: int) -> None:
-        while True:
-            job_id = await self._queue.dequeue()
-            job = await self.get_job(job_id)
+        try:
+            while True:
+                job_id = await self._queue.dequeue()
+                job = await self.get_job(job_id)
 
-            if not job or not all([self._processing_step, self._rendering_step, self._sending_step]):
-                job_logger.log_error(job_id, RuntimeError("Job missing or pipeline steps not registered"))
-                await self._queue.task_done()
-                continue
+                if not job or not all([self._processing_step, self._rendering_step, self._sending_step]):
+                    job_logger.log_error(job_id, RuntimeError("Job missing or pipeline steps not registered"))
+                    await self._queue.task_done()
+                    continue
 
-            job_logger.log_started(job_id)
-            
-            try:
-                # --- CONCURRENCY CONTROL ---
-                # Wait for permission to process (blocks if user is sequential and another worker is busy)
-                await self._concurrency_manager.acquire_processing_slot(job.user_id)
+                job_logger.log_started(job_id)
                 
-                await self._transition_state(job, JobState.PROCESSING)
-                job = await self._processing_step(job)
+                try:
+                    # --- CONCURRENCY CONTROL ---
+                    await self._concurrency_manager.acquire_processing_slot(job.user_id)
+                    
+                    await self._transition_state(job, JobState.PROCESSING)
+                    job = await self._processing_step(job)
 
-                await self._transition_state(job, JobState.RENDERING)
-                job = await self._rendering_step(job)
+                    await self._transition_state(job, JobState.RENDERING)
+                    job = await self._rendering_step(job)
 
-                await self._transition_state(job, JobState.SENDING)
-                job = await self._sending_step(job)
+                    await self._transition_state(job, JobState.SENDING)
+                    job = await self._sending_step(job)
 
-                await self._transition_state(job, JobState.FINISHED)
-                
-                scene_count = len(job.page_data.scenes) if job.page_data else 0
-                element_count = sum(len(s.elements) for s in job.page_data.scenes) if job.page_data else 0
-                job_logger.log_completed(job_id, scene_count, element_count)
+                    await self._transition_state(job, JobState.FINISHED)
+                    
+                    scene_count = len(job.page_data.scenes) if job.page_data else 0
+                    element_count = sum(len(s.elements) for s in job.page_data.scenes) if job.page_data else 0
+                    job_logger.log_completed(job_id, scene_count, element_count)
 
-            except Exception as e:
-                job_logger.log_error(job_id, e)
-                await self._transition_state(job, JobState.FAILED)
-                if self._error_notifier:
-                    try:
-                        await self._error_notifier(job, e)
-                    except Exception as notify_err:
-                        logger.error(f"Failed to send error notification: {notify_err}")
+                except Exception as e:
+                    job_logger.log_error(job_id, e)
+                    await self._transition_state(job, JobState.FAILED)
+                    if self._error_notifier:
+                        try:
+                            await self._error_notifier(job, e)
+                        except Exception as notify_err:
+                            logger.error(f"Failed to send error notification: {notify_err}")
 
-            finally:
-                # --- RELEASE CONCURRENCY SLOT ---
-                await self._concurrency_manager.release_processing_slot(job.user_id)
-                await self._queue.task_done()
-                async with self._lock:
-                    self._registry.pop(job.job_id, None)
-                await asyncio.sleep(self.POST_JOB_DELAY_SECONDS)
+                finally:
+                    # --- RELEASE CONCURRENCY SLOT ---
+                    await self._concurrency_manager.release_processing_slot(job.user_id)
+                    await self._queue.task_done()
+                    async with self._lock:
+                        self._registry.pop(job.job_id, None)
+                    await asyncio.sleep(self.POST_JOB_DELAY_SECONDS)
+        except asyncio.CancelledError:
+            logger.info(f"Worker {worker_id} gracefully shut down.")
+            return
 
     async def _transition_state(self, job: PageJob, new_state: JobState) -> None:
         async with self._lock:

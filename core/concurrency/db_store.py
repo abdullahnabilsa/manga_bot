@@ -15,7 +15,11 @@ class ConcurrencyDBStore:
 
     async def get_global_limit(self) -> int:
         row = await self._db.fetchone("SELECT value FROM meta WHERE key = 'global_concurrency_limit'")
-        return int(row[0]) if row else 1
+        if not row:
+            # إذا لم يكن هناك حد محفوظ، نضع القيمة الافتراضية 3 ونحفظها
+            await self.set_global_limit(3)
+            return 3
+        return int(row[0])
 
     async def set_global_limit(self, limit: int) -> int:
         limit = max(1, min(5, limit))  # Hardcoded boundaries: 1 to 5

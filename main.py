@@ -23,7 +23,7 @@ from core.access_manager import AccessManager
 from core.pipeline import BotPipeline
 from ai.gemini_provider import GeminiProvider
 from renderer.telegram_renderer import TelegramRenderer
-from core.concurrency import ConcurrencyDBStore, ConcurrencyManager  # <--- جديد
+from core.concurrency import ConcurrencyDBStore, ConcurrencyManager  # <--- نظام التزامن
 
 from handlers.ui.start import start_command, help_command
 from handlers.ui.settings import settings_command, settings_callback
@@ -33,7 +33,7 @@ from handlers.ui.access import (
     add_user_command, remove_user_command, add_admin_command, remove_admin_command, 
     list_users_command, open_requests_command, close_requests_command, handle_request_callback
 )
-from handlers.ui.concurrency import boost_command, set_limit_command, grant_parallel_command, revoke_parallel_command  # <--- جديد
+from handlers.ui.concurrency import boost_command, set_limit_command, grant_parallel_command, revoke_parallel_command  # <--- أوامر التزامن
 from handlers.messages import handle_image, handle_text
 from handlers.ui.session import receive_session_filename
 
@@ -43,20 +43,20 @@ logger = logging.getLogger("manga_bot.main")
 
 db = Database(db_path="manga_bot.db")
 queue_manager = AsyncSingleWorkerQueue(max_size=settings.queue_max_size)
-batch_manager = BatchManager()  # <--- تمت الإضافة
-ai_provider = GeminiProvider(  # <--- تمت الإضافة
+batch_manager = BatchManager()
+ai_provider = GeminiProvider(
     timeout=settings.ai_timeout_seconds, 
     cb_threshold=settings.cb_failure_threshold, 
     cb_cooldown=settings.cb_cooldown_seconds
 )
-telegram_renderer = TelegramRenderer()  # <--- تمت الإضافة
+telegram_renderer = TelegramRenderer()
 
 # Temporary placeholders, will be initialized in post_init
 settings_manager: UserSettingsManager = None
 persona_registry: PersonaRegistry = None
 api_key_manager: APIKeyManager = None
 access_manager: AccessManager = None
-concurrency_manager: ConcurrencyManager = None  # <--- جديد
+concurrency_manager: ConcurrencyManager = None
 job_manager: JobManager = None
 
 async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -159,7 +159,7 @@ async def post_init(app: Application) -> None:
     concurrency_db_store = ConcurrencyDBStore(db=db)
     concurrency_manager = ConcurrencyManager(db_store=concurrency_db_store)
     
-    # Dynamically spawn workers based on the global limit
+    # Dynamically spawn workers based on the global limit (Default is 3 if not set)
     max_workers = await concurrency_manager.get_global_limit()
     job_manager = JobManager(
         queue_manager, 
@@ -168,11 +168,14 @@ async def post_init(app: Application) -> None:
         post_job_delay=settings.post_job_delay_seconds
     )
     
+    # <--- ربط المديرين معاً لتفعيل التوسع الديناميكي
+    concurrency_manager.register_job_manager(job_manager)
+    
     public_commands = [
         BotCommand("start", "بدء استخدام البوت"), BotCommand("settings", "فتح الإعدادات"),
         BotCommand("help", "دليل الاستخدام"), BotCommand("start_session", "بدء الجلسة"),
         BotCommand("end_session", "إنهاء الجلسة"), BotCommand("cancel", "إلغاء الجلسة"),
-        BotCommand("boost", "🚀 تفعيل المعالجة المتوازية")  # <--- جديد
+        BotCommand("boost", "🚀 تفعيل المعالجة المتوازية")
     ]
     await bot.set_my_commands(public_commands)
     
@@ -184,9 +187,9 @@ async def post_init(app: Application) -> None:
     ]
     super_admin_commands = admin_commands + [
         BotCommand("addadmin", "👑 ترقية لمشرف"), BotCommand("removeadmin", "📉 إزالة مشرف"),
-        BotCommand("setlimit", "⚙️ تحديد حد المعالجة المتوازية"),  # <--- جديد
-        BotCommand("grantparallel", "✅ منح معالجة متوازية"),       # <--- جديد
-        BotCommand("revokeparallel", "📉 سحب معالجة متوازية")       # <--- جديد
+        BotCommand("setlimit", "⚙️ تحديد حد المعالجة المتوازية"),
+        BotCommand("grantparallel", "✅ منح معالجة متوازية"),
+        BotCommand("revokeparallel", "📉 سحب معالجة متوازية")
     ]
     
     admins = await access_manager.get_admins()
@@ -201,7 +204,7 @@ async def post_init(app: Application) -> None:
         bot=bot, settings_manager=settings_manager, batch_manager=batch_manager, 
         persona_registry=persona_registry, ai_provider=ai_provider, 
         telegram_renderer=telegram_renderer, api_key_manager=api_key_manager,
-        queue_manager=queue_manager, concurrency_manager=concurrency_manager  # <--- جديد
+        queue_manager=queue_manager, concurrency_manager=concurrency_manager
     )
     
     app.bot_data["db"] = db
@@ -213,7 +216,7 @@ async def post_init(app: Application) -> None:
     app.bot_data["api_key_manager"] = api_key_manager
     app.bot_data["access_manager"] = access_manager
     app.bot_data["pipeline"] = pipeline
-    app.bot_data["concurrency_manager"] = concurrency_manager  # <--- جديد
+    app.bot_data["concurrency_manager"] = concurrency_manager
 
     await pipeline.register(job_manager)
     await job_manager.start()
@@ -236,7 +239,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start_session", start_session_command))
     app.add_handler(CommandHandler("end_session", end_session_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
-    app.add_handler(CommandHandler("boost", boost_command))  # <--- جديد
+    app.add_handler(CommandHandler("boost", boost_command))
     
     app.add_handler(CommandHandler("addkey", add_public_key_command))
     app.add_handler(CommandHandler("listkeys", list_public_keys_command))
@@ -250,9 +253,9 @@ def main() -> None:
     
     app.add_handler(CommandHandler("addadmin", add_admin_command))
     app.add_handler(CommandHandler("removeadmin", remove_admin_command))
-    app.add_handler(CommandHandler("setlimit", set_limit_command))                  # <--- جديد
-    app.add_handler(CommandHandler("grantparallel", grant_parallel_command))        # <--- جديد
-    app.add_handler(CommandHandler("revokeparallel", revoke_parallel_command))      # <--- جديد
+    app.add_handler(CommandHandler("setlimit", set_limit_command))
+    app.add_handler(CommandHandler("grantparallel", grant_parallel_command))
+    app.add_handler(CommandHandler("revokeparallel", revoke_parallel_command))
     
     app.add_handler(MessageHandler(filters.Regex("⚙️ الإعدادات"), settings_command))
     app.add_handler(MessageHandler(filters.Regex("📖 المساعدة"), help_command))

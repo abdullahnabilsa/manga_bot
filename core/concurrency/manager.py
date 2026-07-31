@@ -14,12 +14,20 @@ class ConcurrencyManager:
     def __init__(self, db_store: ConcurrencyDBStore) -> None:
         self._db_store = db_store
         self._locks = LockManager()
+        self._job_manager = None  # will be injected later
+
+    def register_job_manager(self, job_manager) -> None:
+        self._job_manager = job_manager
 
     async def get_global_limit(self) -> int:
         return await self._db_store.get_global_limit()
 
     async def set_global_limit(self, limit: int) -> int:
-        return await self._db_store.set_global_limit(limit)
+        new_limit = await self._db_store.set_global_limit(limit)
+        # --- DYNAMIC SCALING ---
+        if self._job_manager:
+            await self._job_manager.scale_workers(new_limit)
+        return new_limit
 
     async def grant_permanent_access(self, user_id: int) -> None:
         await self._db_store.grant_permanent_access(user_id)
