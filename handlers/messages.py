@@ -51,7 +51,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     
     if context.user_data.get('awaiting_session_filename'):
         context.user_data['awaiting_session_filename'] = False
-        # تم إزالة الـ \" الزائدة التي كانت تسبب خطأ
         await context.bot.send_message(chat_id=chat_id, text="↩️ *تم إلغاء انتظار الاسم وإضافة الصورة للطابور\\.*", parse_mode=ParseMode.MARKDOWN_V2)
     
     is_session_active = await batch_manager.is_session_active(user.id)
@@ -77,18 +76,11 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     if is_session_active:
         tracker_id = await batch_manager.get_tracker(user.id)
-        current_queue = await queue_manager.size()
-        translated_count = len(await batch_manager.get_session_data(user.id))
         
-        if queue_size_before == 0 and tracker_id:
-            try: 
-                await context.bot.delete_message(chat_id=chat_id, message_id=tracker_id)
-            except: 
-                pass
-            await batch_manager.set_tracker(user.id, None)
-            tracker_id = None
-            
+        # إنشاء رسالة التتبع لمرة واحدة فقط، ولن يتم حذفها مجرداً لتفادي حظر تيليجرام
         if not tracker_id:
+            current_queue = await queue_manager.size()
+            translated_count = len(await batch_manager.get_session_data(user.id))
             text = (
                 f"⏳ *تم استلام الصور وجاري بدء المعالجة...*\n\n"
                 f"📊 *إحصائيات الجلسة الحالية:*\n"
@@ -101,6 +93,8 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await batch_manager.set_tracker(user.id, msg.message_id)
             except Exception: pass
         else:
+            # للصور التالية: نكتفي بمؤشر الكتابة لإعلام المستخدم دون لمس الرسالة
+            # الـ SessionSender سيتولى تحديث العداد لحظياً أثناء المعالجة
             try: await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
             except: pass
     else:
