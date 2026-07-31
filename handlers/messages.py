@@ -1,6 +1,7 @@
 # File: handlers/messages.py
 from __future__ import annotations
 import asyncio
+from datetime import datetime, timezone
 from typing import Optional
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -23,6 +24,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user = update.effective_user
     chat_id = update.effective_chat.id
     
+    # صمام الأمان: رفض أي صورة أثناء عملية التجميع النهائي
     if await batch_manager.is_finalizing(user.id):
         try:
             await update.message.delete()
@@ -49,6 +51,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await context.bot.send_message(chat_id=chat_id, text="⚠️ *خطأ في الاستلام\\.*\nلم أتمكن من قراءة الصورة، يرجى إعادة إرسالها\\.", parse_mode=ParseMode.MARKDOWN_V2)
         return
     
+    # إعادة ضبط حالة انتظار اسم الملف إذا أرسل المستخدم صورة (تدبير احتياطي)
     if context.user_data.get('awaiting_session_filename'):
         context.user_data['awaiting_session_filename'] = False
         await context.bot.send_message(chat_id=chat_id, text="↩️ *تم إلغاء انتظار الاسم وإضافة الصورة للطابور\\.*", parse_mode=ParseMode.MARKDOWN_V2)
@@ -77,19 +80,26 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if is_session_active:
         tracker_id = await batch_manager.get_tracker(user.id)
         
-        # --- إصلاح احترافي: إعادة تدوير رسالة التتبع ---
-        # إذا كان الطابور قد فرغ (انتهت الدفعة السابقة) ورسالة التتبع لا تزال موجودة،
-        # نقوم بحذفها صمتاً لإنشاء رسالة جديدة في أسفل الشات (تحديث مكانها)
-        if queue_size_before == 0 and tracker_id:
+        # --- آلية كشف الدفعات الجديدة (Batch Detection) ---
+        # نعتمد على الفارق الزمني بين استلام الصور لتحديد ما إذا كانت دفعة جديدة
+        current_msg_time = update.message.date if update.message.date else datetime.now(timezone.utc)
+        last_msg_time = context.user_data.get('last_image_time')
+        
+        # إذا كان الفارق الزمني أكثر من 3 ثوانٍ، أو لم نسجل وقتاً من قبل، فهذه دفعة جديدة
+        is_new_batch = not last_msg_time or (current_msg_time - last_msg_time).total_seconds() > 3.0
+        context.user_data['last_image_time'] = current_msg_time
+        
+        # إذا كانت دفعة جديدة، نحذف التتبع القديم (إن وجد) ليتم إنشاء واحد جديد في الأسفل
+        if is_new_batch and tracker_id:
             try:
                 await context.bot.delete_message(chat_id=chat_id, message_id=tracker_id)
             except Exception:
                 pass
             await batch_manager.set_tracker(user.id, None)
-            tracker_id = None  # إجبار الكود لإنشاء رسالة جديدة
+            tracker_id = None
         # ------------------------------------------------
         
-        # إنشاء رسالة التتبع لمرة واحدة فقط، ولن يتم حذفها مجرداً لتفادي حظر تيليجرام
+        # إنشاء رسالة التتبع إذا لم تكن موجودة (سواء كان هذا أول استلام، أو دفعة جديدة)
         if not tracker_id:
             current_queue = await queue_manager.size()
             translated_count = len(await batch_manager.get_session_data(user.id))
@@ -103,13 +113,16 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             try:
                 msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
                 await batch_manager.set_tracker(user.id, msg.message_id)
-            except Exception: pass
+            except Exception: 
+                pass
         else:
-            # للصور التالية أثناء المعالجة: نكتفي بمؤشر الكتابة لإعلام المستخدم دون لمس الرسالة
-            # الـ SessionSender سيتولى تحديث العداد لحظياً أثناء المعالجة
-            try: await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-            except: pass
+            # للصور التالية في نفس الدفعة الزمنية: نكتفي بمؤشر الكتابة لتفادي الوميض
+            try: 
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+            except: 
+                pass
     else:
+        # --- وضع الإرسال المباشر (Direct Mode) ---
         user_settings = await settings_manager.get_user_settings(user.id)
         output_method = user_settings.get("output_method", "files_only")
         if output_method == "chat_and_files": output_method = "messages_and_files"
@@ -117,13 +130,16 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if output_method == "messages_only":
             try:
                 await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-            except Exception: pass
+            except Exception: 
+                pass
         else:
             if queue_size_before == 0:
                 direct_msg_id = context.user_data.get('direct_status_msg_id')
                 if direct_msg_id:
-                    try: await context.bot.delete_message(chat_id=chat_id, message_id=direct_msg_id)
-                    except: pass
+                    try: 
+                        await context.bot.delete_message(chat_id=chat_id, message_id=direct_msg_id)
+                    except: 
+                        pass
                 
                 text = "⏳ *جاري التحليل الآن\\.\\.\\.*"
                 try:
@@ -142,10 +158,13 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 except TelegramError:
                     pass
             else:
-                try: await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-                except: pass
+                try: 
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                except: 
+                    pass
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # توجيه النصوص بناءً على حالة المستخدم
     if context.user_data.get('awaiting_user_api_key'):
         await receive_user_api_key(update, context)
     elif context.user_data.get('awaiting_admin_api_key'):
