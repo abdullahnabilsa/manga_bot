@@ -33,8 +33,8 @@ class SessionSender:
         is_pending = await self.batch_manager.is_pending_compile(job.user_id)
         queue_size = await self.pipeline.queue_manager.size()
         
-        # --- نمط التحديث كل صورتين + التحديث الإجباري عند انتهاء الطابور ---
-        should_update = (total_pages % 2 == 0) or (queue_size == 0)
+        # --- نمط التحديث كل صورتين + التحديث الإجباري عند انتهاء الطابور أو وجود اسم ملف ---
+        should_update = (total_pages % 2 == 0) or (queue_size == 0) or is_pending
         
         if should_update:
             await self._update_session_tracker(job, total_pages, queue_size, is_pending)

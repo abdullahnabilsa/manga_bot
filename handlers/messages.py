@@ -5,7 +5,7 @@ from typing import Optional
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode, ChatAction
-from telegram.error import RetryAfter, TelegramError, BadRequest
+from telegram.error import RetryAfter, TelegramError
 from models.page_job import PageJob
 from utils.markdown_escaper import escape_markdown_v2
 
@@ -23,6 +23,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user = update.effective_user
     chat_id = update.effective_chat.id
     
+    # --- الحصار الأمني: رفض الصور أثناء التجميع النهائي ---
     if await batch_manager.is_finalizing(user.id):
         try:
             await update.message.delete()
@@ -79,51 +80,32 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         current_queue = await queue_manager.size()
         translated_count = len(await batch_manager.get_session_data(user.id))
         
-        # --- نمط التحديث كل صورتين + التأخير الاحترافي ---
-        should_update = (current_queue % 2 == 0) or (current_queue == 1)
-        
-        if should_update:
-            if queue_size_before == 0 and tracker_id:
-                try: 
-                    await context.bot.delete_message(chat_id=chat_id, message_id=tracker_id)
-                except: 
-                    pass
-                await batch_manager.set_tracker(user.id, None)
-                tracker_id = None
-                
-            if not tracker_id:
-                text = (
-                    f"⏳ *تم استلام الصور وجاري بدء المعالجة...*\n\n"
-                    f"📊 *إحصائيات الجلسة الحالية:*\n"
-                    f"• الصور المترجمة: `{translated_count}`\n"
-                    f"• الصور في الطابور: `{current_queue}`\n\n"
-                    f"_يرجى الانتظار، الذكاء الاصطناعي يحلل الصور..._"
-                )
-                try:
-                    msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-                    await batch_manager.set_tracker(user.id, msg.message_id)
-                except Exception: pass
-            else:
-                text = (
-                    f"⏳ *تم استلام صور جديدة وإضافتها للطابور...*\n\n"
-                    f"📊 *إحصائيات الجلسة الحالية:*\n"
-                    f"• الصور المترجمة: `{translated_count}`\n"
-                    f"• الصور في الطابور: `{current_queue}`\n\n"
-                    f"_يرجى الانتظار، جاري المعالجة..._"
-                )
-                await asyncio.sleep(0.5)
-                for attempt in range(3):
-                    try:
-                        await context.bot.edit_message_text(chat_id=chat_id, message_id=tracker_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-                        break
-                    except RetryAfter as e:
-                        await asyncio.sleep(e.retry_after)
-                    except BadRequest as e:
-                        if "message is not modified" not in str(e).lower():
-                            pass
-                        break
-                    except Exception:
-                        break
+        # إذا كان الطابور فارغاً قبل وصول هذه الصورة، فهذا يعني بداية دفعة جديدة
+        if queue_size_before == 0 and tracker_id:
+            try: 
+                await context.bot.delete_message(chat_id=chat_id, message_id=tracker_id)
+            except: 
+                pass
+            await batch_manager.set_tracker(user.id, None)
+            tracker_id = None
+            
+        # إنشاء رسالة التتبع فقط إذا لم تكن موجودة
+        if not tracker_id:
+            text = (
+                f"⏳ *تم استلام الصور وجاري بدء المعالجة...*\n\n"
+                f"📊 *إحصائيات الجلسة الحالية:*\n"
+                f"• الصور المترجمة: `{translated_count}`\n"
+                f"• الصور في الطابور: `{current_queue}`\n\n"
+                f"_يرجى الانتظار، الذكاء الاصطناعي يحلل الصور..._"
+            )
+            try:
+                msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+                await batch_manager.set_tracker(user.id, msg.message_id)
+            except Exception: pass
+        else:
+            # للصور التالية في نفس الدفعة: فقط مؤشر الكتابة لإبقاء المستخدم مطمئناً دون لمس الرسالة
+            try: await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+            except: pass
     else:
         user_settings = await settings_manager.get_user_settings(user.id)
         output_method = user_settings.get("output_method", "files_only")
@@ -157,21 +139,9 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 except TelegramError:
                     pass
             else:
-                direct_msg_id = context.user_data.get('direct_status_msg_id')
-                if direct_msg_id:
-                    text = f"⏳ *جاري التحليل...*\n📦 في الطابور: `{queue_size_before}`"
-                    try:
-                        await context.bot.edit_message_text(chat_id=chat_id, message_id=direct_msg_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-                        job.status_message_id = direct_msg_id
-                    except Exception:
-                        try:
-                            status_msg = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-                            job.status_message_id = status_msg.message_id
-                            context.user_data['direct_status_msg_id'] = status_msg.message_id
-                        except: pass
-                else:
-                    try: await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-                    except: pass
+                # للصور المزدحمة في الوضع العادي: مؤثر كتابة فقط
+                try: await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                except: pass
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.user_data.get('awaiting_user_api_key'):
