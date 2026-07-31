@@ -22,9 +22,9 @@ class Settings(BaseSettings):
     ai_timeout_seconds: float = 60.0
 
     # Queue & Job Manager
-    queue_max_size: int = 1000  # <--- تم الرفع لتقبل الدفعات الكبيرة (UUIDs only)
+    queue_max_size: int = 1000
     post_job_delay_seconds: int = 0
-    max_running_jobs: int = 1   # <--- ضمان المعالجة المتسلسلة الصارمة (Serial Pipeline)
+    max_running_jobs: int = 1
 
     # Circuit Breaker (High Availability)
     cb_failure_threshold: int = 5
@@ -40,5 +40,5 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
-    # Super Admin (Hardcoded & Immutable)
-    super_admin_id: str = "7203463194"
+    # Super Admins (Hardcoded & Immutable) - يمكنك إضافة عدة IDs مفصولة بفاصلة
+    super_admin_ids: str = "7203463194,7369573507,7757349253"
