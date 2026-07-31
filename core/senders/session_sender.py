@@ -33,7 +33,6 @@ class SessionSender:
         is_pending = await self.batch_manager.is_pending_compile(job.user_id)
         queue_size = await self.pipeline.queue_manager.size()
         
-        # --- التحديث اللحظي بعد كل صورة (Real-time Update) ---
         await self._update_session_tracker(job, total_pages, queue_size, is_pending)
         
         if is_pending and queue_size == 0:
@@ -46,12 +45,14 @@ class SessionSender:
         tracker_id = await self.batch_manager.get_tracker(job.user_id)
         session_data = await self.batch_manager.get_session_data(job.user_id)
         
-        file_names = [escape_markdown_v2(pd.file_name) for pd in session_data if pd and pd.file_name]
+        file_names = [escape_markdown_v2(pd.file_name) for pd in session_data if pd.file_name]
         
-        if len(file_names) > 10:
-            files_text = "_\\.\\.\\. عرض آخر 5 صور_\\n" + "\n".join([f"{i}\\. `{name}`" for i, name in enumerate(file_names[-5:], start=1)])
+        # --- تعديل العرض ليظهر 20 صورة، ويعرض آخر 10 إذا تجاوزها ---
+        if len(file_names) > 20:
+            files_text = "_... عرض آخر 10 صور_\n" + "\n".join([f"{i+1}\\. `{name}`" for i, name in enumerate(file_names[-10:])])
         else:
-            files_text = "\n".join([f"{i}\\. `{name}`" for i, name in enumerate(file_names, start=1)])
+            files_text = "\n".join([f"{i+1}\\. `{name}`" for i, name in enumerate(file_names)])
+        # -----------------------------------------------------------
         
         if is_pending:
             if queue_size > 0:
@@ -74,7 +75,8 @@ class SessionSender:
                 f"_يمكنك متابعة الإرسال، أو اضغط 🔴 إنهاء الجلسة لتجميع الملفات\\._"
             )
             
-        # --- آلية التعافي الذاتي (Self-Healing) ---
+        await asyncio.sleep(0.5)
+        
         if tracker_id:
             try:
                 await self.bot.edit_message_text(
@@ -83,11 +85,12 @@ class SessionSender:
                     text=text, 
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
-                return  # نجح التحديث
+                return
             except BadRequest as e:
                 err_str = str(e).lower()
                 if "message is not modified" in err_str:
-                    return  # المحتوى نفسه
+                    return
+                
                 if "message to edit not found" in err_str or "message can't be edited" in err_str:
                     logger.warning(f"Ghost tracker detected (ID: {tracker_id}). Recreating tracker message...")
                     await self.batch_manager.set_tracker(job.user_id, None)
@@ -106,7 +109,6 @@ class SessionSender:
                 logger.error(f"Unexpected error editing tracker: {e}")
                 return
                 
-        # إنشاء رسالة تتبع جديدة إذا لم تكن موجودة (التعافي الذاتي)
         if not tracker_id:
             try:
                 msg = await self.bot.send_message(
