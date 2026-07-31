@@ -22,14 +22,13 @@ class Settings(BaseSettings):
     ai_timeout_seconds: float = 60.0
 
     # Queue & Job Manager
-    queue_max_size: int = 100
+    queue_max_size: int = 1000  # <--- تم الرفع لتقبل الدفعات الكبيرة (UUIDs only)
     post_job_delay_seconds: int = 0
-    max_running_jobs: int = 3
-    max_jobs_per_user: int = 5  # <--- جديد: العدالة لكل مستخدم
+    max_running_jobs: int = 1   # <--- ضمان المعالجة المتسلسلة الصارمة (Serial Pipeline)
 
-    # Circuit Breaker (High Availability) <--- جديد
-    cb_failure_threshold: int = 5  # عدد الأخطاء المتتالية لفتح الدائرة
-    cb_cooldown_seconds: int = 60  # مدة التبريد قبل السماح بطلب اختبار
+    # Circuit Breaker (High Availability)
+    cb_failure_threshold: int = 5
+    cb_cooldown_seconds: int = 60
 
     # Telegram rendering limits
     telegram_text_limit: int = 4096

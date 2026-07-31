@@ -44,7 +44,6 @@ queue_manager = AsyncSingleWorkerQueue(max_size=settings.queue_max_size)
 job_manager = JobManager(
     queue_manager, 
     max_running_jobs=settings.max_running_jobs, 
-    max_jobs_per_user=settings.max_jobs_per_user,
     post_job_delay=settings.post_job_delay_seconds
 )
 batch_manager = BatchManager()

@@ -70,15 +70,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if submission_result == JobSubmissionResult.QUEUE_FULL:
         await context.bot.send_message(
             chat_id=chat_id, 
-            text="🚨 *النظام مشغول جداً حالياً\\.*\nلقد وصل الطابور إلى الحد الأقصى\\. يرجى الانتظار دقيقة وإعادة إرسال الصورة\\.", 
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
-        return
-        
-    if submission_result == JobSubmissionResult.USER_LIMIT_REACHED:
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            text="⏳ *لديك 5 صور قيد المعالجة بالفعل\\.*\nيرجى الانتظار حتى تكتمل معالجة بعض صورك قبل إرسال المزيد\\.", 
+            text="🚨 *النظام مشغول جداً حالياً\\.*\nلقد وصل الطابور العام إلى الحد الأقصى\\. يرجى الانتظار دقيقة وإعادة إرسال الصور\\.", 
             parse_mode=ParseMode.MARKDOWN_V2
         )
         return
