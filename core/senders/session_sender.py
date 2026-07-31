@@ -22,12 +22,10 @@ class SessionSender:
         self.settings_manager = pipeline.settings_manager
 
     async def process(self, job: PageJob, handler) -> PageJob:
-        # --- الحارس الجديد: منع معالجة الصور إذا تم إلغاء الجلسة ---
         is_active = await self.batch_manager.is_session_active(job.user_id)
         if not is_active:
             logger.info(f"JobID={job.job_id} | User cancelled the session. Dropping queued job silently.")
             return job
-        # -----------------------------------------------------------
 
         total_pages = await self.batch_manager.add_page_data(job.user_id, job.page_data)
         logger.info(f"JobID={job.job_id} | Added to session buffer. Total pages: {total_pages}")
@@ -35,7 +33,11 @@ class SessionSender:
         is_pending = await self.batch_manager.is_pending_compile(job.user_id)
         queue_size = await self.pipeline.queue_manager.size()
         
-        await self._update_session_tracker(job, total_pages, queue_size, is_pending)
+        # --- نمط التحديث كل صورتين + التحديث الإجباري عند انتهاء الطابور ---
+        should_update = (total_pages % 2 == 0) or (queue_size == 0)
+        
+        if should_update:
+            await self._update_session_tracker(job, total_pages, queue_size, is_pending)
         
         if is_pending and queue_size == 0:
             logger.info(f"JobID={job.job_id} | Queue empty, triggering deferred compile.")
@@ -75,7 +77,9 @@ class SessionSender:
                 f"_يمكنك متابعة الإرسال، أو اضغط 🔴 إنهاء الجلسة لتجميع الملفات\\._"
             )
             
-        # --- آلية إعادة المحاولة الذكية لتجاوز قيود تيليجرام ---
+        # --- نمط التأخير الاحترافي (Micro-delay) ---
+        await asyncio.sleep(0.5)
+        
         for attempt in range(3):
             try:
                 if tracker_id:
@@ -83,9 +87,9 @@ class SessionSender:
                 else:
                     msg = await self.bot.send_message(chat_id=job.chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
                     await self.batch_manager.set_tracker(job.user_id, msg.message_id)
-                break # نجح التحديث، اخرج من حلقة المحاولة
+                break
             except RetryAfter as e:
-                logger.warning(f"Rate limited while updating tracker. Sleeping for {e.retry_after}s...")
+                logger.warning(f"Rate limited. Sleeping for {e.retry_after}s...")
                 await asyncio.sleep(e.retry_after)
             except BadRequest as e:
                 if "message is not modified" not in str(e).lower():
@@ -96,7 +100,6 @@ class SessionSender:
                 break
 
     async def compile_and_send(self, user_id: int, chat_id: int) -> None:
-        """وظيفة موحدة لتجميع البيانات وإرسالها بناءً على إعدادات المستخدم واسم الملف المخصص."""
         session_data = await self.batch_manager.get_session_data(user_id)
         if not session_data:
             return
@@ -149,4 +152,4 @@ class SessionSender:
             
         await self.batch_manager.clear_session(user_id)
         await self.batch_manager.clear_pending_compile(user_id)
-        await self.batch_manager.set_finalizing(user_id, False)  # <--- إعادة فتح صمام الاستقبال بعد التجميع
+        await self.batch_manager.set_finalizing(user_id, False)
