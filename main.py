@@ -43,6 +43,13 @@ logger = logging.getLogger("manga_bot.main")
 
 db = Database(db_path="manga_bot.db")
 queue_manager = AsyncSingleWorkerQueue(max_size=settings.queue_max_size)
+batch_manager = BatchManager()  # <--- تمت الإضافة
+ai_provider = GeminiProvider(  # <--- تمت الإضافة
+    timeout=settings.ai_timeout_seconds, 
+    cb_threshold=settings.cb_failure_threshold, 
+    cb_cooldown=settings.cb_cooldown_seconds
+)
+telegram_renderer = TelegramRenderer()  # <--- تمت الإضافة
 
 # Temporary placeholders, will be initialized in post_init
 settings_manager: UserSettingsManager = None
