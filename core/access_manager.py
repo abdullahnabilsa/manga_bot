@@ -10,12 +10,13 @@ logger = logging.getLogger(__name__)
 class AccessManager:
     """Manages access control hierarchy and join requests via SQLite."""
     
-    def __init__(self, db: Database, super_admin_id: str = "7203463194") -> None:
+    def __init__(self, db: Database, super_admin_ids: str = "") -> None:
         self._db = db
-        self._super_admin_id = str(super_admin_id)
+        # تقسيم النص إلى قائمة IDs وتنظيف المسافات
+        self._super_admin_ids = [uid.strip() for uid in super_admin_ids.split(",") if uid.strip()]
 
     def is_super_admin(self, user_id: int) -> bool:
-        return str(user_id) == self._super_admin_id
+        return str(user_id) in self._super_admin_ids
 
     async def is_admin(self, user_id: int) -> bool:
         if self.is_super_admin(user_id): return True
@@ -63,7 +64,10 @@ class AccessManager:
 
     async def get_admins(self) -> List[str]:
         rows = await self._db.fetchall("SELECT user_id FROM users_access WHERE role = 'admin'")
-        return [self._super_admin_id] + [str(row[0]) for row in rows]
+        db_admins = [str(row[0]) for row in rows]
+        # دمج السوبر أدمنز مع أدمنز القاعدة وإزالة التكرار
+        all_admins = list(set(self._super_admin_ids + db_admins))
+        return all_admins
 
     async def get_users(self) -> List[str]:
         rows = await self._db.fetchall("SELECT user_id FROM users_access WHERE role = 'user'")

@@ -33,7 +33,7 @@ from handlers.ui.access import (
     list_users_command, open_requests_command, close_requests_command, handle_request_callback
 )
 from handlers.messages import handle_image, handle_text
-from handlers.ui.session import receive_session_filename  # <--- استيراد مباشر للاعتراض
+from handlers.ui.session import receive_session_filename
 
 settings = Settings()
 logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
@@ -91,23 +91,20 @@ async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE
     raise ApplicationHandlerStop
 
 async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # 1. حماية وضع إدخال اسم الملف (Input Integrity First)
+    # 1. حماية وضع إدخال اسم الملف
     if context.user_data.get('awaiting_session_filename'):
-        # منع أزرار الإعدادات (Inline Keyboards)
         if update.callback_query:
             await update.callback_query.answer("📝 يرجى إرسال اسم الملف فقط كنص أو /cancel للإلغاء.", show_alert=True)
             raise ApplicationHandlerStop
             
         msg = update.message
         
-        # السماح لأمر /cancel بالمرور لمعالجه الخاص به
-        if msg and msg.text == "/cancel":
+        # السماح لأمر /cancel و /start بالمرور
+        if msg and msg.text in ["/cancel", "/start"]:
             return
             
-        # تحديد رسائل النظام والأزرار الثابتة
         persistent_buttons = ["⚙️ الإعدادات", "📖 المساعدة", "🟢 بدء الجلسة", "🔴 إنهاء الجلسة"]
         
-        # التحقق هل هي رسالة نصية عادية مسموح بها؟
         is_plain_text = (
             msg and 
             msg.text and 
@@ -117,12 +114,10 @@ async def state_purge_middleware(update: Update, context: ContextTypes.DEFAULT_T
             not msg.document
         )
         
-        # إذا كانت نصاً عادياً، مررها لتسمية الملف فوراً
         if is_plain_text:
             await receive_session_filename(update, context)
             raise ApplicationHandlerStop
             
-        # أي شيء آخر (أوامر أخرى غير /cancel، أزرار ثابتة، صور، ملصقات، ملفات) -> حذف فوري وصامت
         if msg:
             try: 
                 await msg.delete()
@@ -158,8 +153,8 @@ async def session_guard_middleware(update: Update, context: ContextTypes.DEFAULT
     if update.message and (update.message.photo or (update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith('image/'))):
         return
 
-    # السماح لأمر /cancel و زر إنهاء الجلسة بالمرور
-    if update.message and update.message.text in ["/end_session", "🔴 إنهاء الجلسة", "/cancel"]:
+    # السماح لأمر /cancel و /start و زر إنهاء الجلسة بالمرور
+    if update.message and update.message.text in ["/end_session", "🔴 إنهاء الجلسة", "/cancel", "/start"]:
         return
 
     if update.message:
@@ -177,7 +172,8 @@ async def post_init(app: Application) -> None:
     
     await db.connect()
     
-    access_manager = AccessManager(db=db, super_admin_id=settings.super_admin_id)
+    # <--- تم التعديل هنا ليقبل قائمة السوبر أدمنز
+    access_manager = AccessManager(db=db, super_admin_ids=settings.super_admin_ids)
     api_key_manager = APIKeyManager(db=db)
     settings_manager = UserSettingsManager(db=db)
     persona_registry = PersonaRegistry(modules_dir="modules")
@@ -244,7 +240,7 @@ def main() -> None:
     app.add_handler(CommandHandler("settings", settings_command))
     app.add_handler(CommandHandler("start_session", start_session_command))
     app.add_handler(CommandHandler("end_session", end_session_command))
-    app.add_handler(CommandHandler("cancel", cancel_command))  # <--- تسجيل أمر الإلغاء
+    app.add_handler(CommandHandler("cancel", cancel_command))
     
     app.add_handler(CommandHandler("addkey", add_public_key_command))
     app.add_handler(CommandHandler("listkeys", list_public_keys_command))
