@@ -51,7 +51,8 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     
     if context.user_data.get('awaiting_session_filename'):
         context.user_data['awaiting_session_filename'] = False
-        await context.bot.send_message(chat_id=chat_id, text="↩️ *تم إلغاء انتظار الاسم وإضافة الصورة للطابور\\.\"", parse_mode=ParseMode.MARKDOWN_V2)
+        # تم إزالة الـ \" الزائدة التي كانت تسبب خطأ
+        await context.bot.send_message(chat_id=chat_id, text="↩️ *تم إلغاء انتظار الاسم وإضافة الصورة للطابور\\.*", parse_mode=ParseMode.MARKDOWN_V2)
     
     is_session_active = await batch_manager.is_session_active(user.id)
     queue_size_before = await queue_manager.size()
@@ -79,8 +80,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         current_queue = await queue_manager.size()
         translated_count = len(await batch_manager.get_session_data(user.id))
         
-        # إذا كان الطابور فارغاً قبل وصول هذه الصورة، فهذا يعني بداية دفعة جديدة
-        # نقوم بمسح رسالة الـ Tracker القديمة (إن وجدت) لتنظيف الشات
         if queue_size_before == 0 and tracker_id:
             try: 
                 await context.bot.delete_message(chat_id=chat_id, message_id=tracker_id)
@@ -89,7 +88,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await batch_manager.set_tracker(user.id, None)
             tracker_id = None
             
-        # إنشاء رسالة التتبع فقط إذا لم تكن موجودة
         if not tracker_id:
             text = (
                 f"⏳ *تم استلام الصور وجاري بدء المعالجة...*\n\n"
@@ -103,8 +101,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await batch_manager.set_tracker(user.id, msg.message_id)
             except Exception: pass
         else:
-            # للصور التالية في نفس الدفعة: فقط مؤشر الكتابة لإبقاء المستخدم مطمئناً دون لمس الرسالة
-            # الـ SessionSender سيتولى تحديث العداد لحظياً أثناء المعالجة
             try: await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
             except: pass
     else:
@@ -140,7 +136,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 except TelegramError:
                     pass
             else:
-                # للصور المزدحمة في الوضع العادي: مؤثر كتابة فقط
                 try: await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
                 except: pass
 

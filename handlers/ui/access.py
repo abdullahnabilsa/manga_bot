@@ -8,7 +8,7 @@ from utils.markdown_escaper import escape_markdown_v2
 async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     access_manager = context.bot_data["access_manager"]
     if not await access_manager.is_admin(update.effective_user.id):
-        await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.")
+        await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.", parse_mode=ParseMode.MARKDOWN_V2)
         return
     
     args = context.args
@@ -28,7 +28,7 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def remove_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     access_manager = context.bot_data["access_manager"]
     if not await access_manager.is_admin(update.effective_user.id):
-        await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.")
+        await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.", parse_mode=ParseMode.MARKDOWN_V2)
         return
     
     args = context.args
@@ -48,7 +48,7 @@ async def remove_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def add_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     access_manager = context.bot_data["access_manager"]
     if not access_manager.is_super_admin(update.effective_user.id):
-        await update.message.reply_text("🚫 هذا الأمر مخصص للسوبر أدمن فقط\\.")
+        await update.message.reply_text("🚫 هذا الأمر مخصص للسوبر أدمن فقط\\.", parse_mode=ParseMode.MARKDOWN_V2)
         return
     
     args = context.args
@@ -68,7 +68,7 @@ async def add_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def remove_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     access_manager = context.bot_data["access_manager"]
     if not access_manager.is_super_admin(update.effective_user.id):
-        await update.message.reply_text("🚫 هذا الأمر مخصص للسوبر أدمن فقط\\.")
+        await update.message.reply_text("🚫 هذا الأمر مخصص للسوبر أدمن فقط\\.", parse_mode=ParseMode.MARKDOWN_V2)
         return
     
     args = context.args
@@ -88,12 +88,13 @@ async def remove_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
 async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     access_manager = context.bot_data["access_manager"]
     if not await access_manager.is_admin(update.effective_user.id):
-        await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.")
+        await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.", parse_mode=ParseMode.MARKDOWN_V2)
         return
     
     users = await access_manager.get_users()
     admins = await access_manager.get_admins()
-    super_admin_id = access_manager._super_admin_id
+    # تم إصلاح الخطأ هنا: استخدام القائمة _super_admin_ids بدلاً من المتغير المفرد
+    super_admin_ids = access_manager._super_admin_ids
     join_status = "مفتوح 🟢" if await access_manager.is_join_requests_open() else "مغلق 🔴"
     
     text = "📋 *قائمة الصلاحيات*\n\n"
@@ -101,7 +102,7 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text += "👑 *المشرفون:*\n"
     for i, adm in enumerate(admins, 1):
         escaped_adm = escape_markdown_v2(adm)
-        tag = "السوبر أدمن" if str(adm) == super_admin_id else "مشرف"
+        tag = "السوبر أدمن" if str(adm) in super_admin_ids else "مشرف"
         escaped_tag = escape_markdown_v2(tag)
         text += f"{i}\\. `{escaped_adm}` \\({escaped_tag}\\)\n"
         
@@ -117,7 +118,7 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def open_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     access_manager = context.bot_data["access_manager"]
     if not await access_manager.is_admin(update.effective_user.id):
-        await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.")
+        await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.", parse_mode=ParseMode.MARKDOWN_V2)
         return
     
     await access_manager.set_join_requests(True)
@@ -126,7 +127,7 @@ async def open_requests_command(update: Update, context: ContextTypes.DEFAULT_TY
 async def close_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     access_manager = context.bot_data["access_manager"]
     if not await access_manager.is_admin(update.effective_user.id):
-        await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.")
+        await update.message.reply_text("🚫 هذا الأمر مخصص للمشرفين فقط\\.", parse_mode=ParseMode.MARKDOWN_V2)
         return
     
     await access_manager.set_join_requests(False)
