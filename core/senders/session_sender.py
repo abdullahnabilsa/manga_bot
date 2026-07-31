@@ -33,11 +33,9 @@ class SessionSender:
         is_pending = await self.batch_manager.is_pending_compile(job.user_id)
         queue_size = await self.pipeline.queue_manager.size()
         
-        # --- نمط التحديث كل صورتين + التحديث الإجباري عند انتهاء الطابور أو وجود اسم ملف ---
-        should_update = (total_pages % 2 == 0) or (queue_size == 0) or is_pending
-        
-        if should_update:
-            await self._update_session_tracker(job, total_pages, queue_size, is_pending)
+        # --- التحديث اللحظي بعد كل صورة (Real-time Update) ---
+        # وقت معالجة الصورة بالذكاء الاصطناعي (2-3 ثوانٍ) كافٍ لتجنب حظر تيليجرام
+        await self._update_session_tracker(job, total_pages, queue_size, is_pending)
         
         if is_pending and queue_size == 0:
             logger.info(f"JobID={job.job_id} | Queue empty, triggering deferred compile.")
@@ -77,27 +75,53 @@ class SessionSender:
                 f"_يمكنك متابعة الإرسال، أو اضغط 🔴 إنهاء الجلسة لتجميع الملفات\\._"
             )
             
-        # --- نمط التأخير الاحترافي (Micro-delay) ---
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.5)  # تأخير بسيط جداً لضمان عدم تضارب الطلبات
         
-        for attempt in range(3):
+        # --- آلية التعافي الذاتي (Self-Healing) ---
+        if tracker_id:
             try:
-                if tracker_id:
-                    await self.bot.edit_message_text(chat_id=job.chat_id, message_id=tracker_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-                else:
-                    msg = await self.bot.send_message(chat_id=job.chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-                    await self.batch_manager.set_tracker(job.user_id, msg.message_id)
-                break
-            except RetryAfter as e:
-                logger.warning(f"Rate limited. Sleeping for {e.retry_after}s...")
-                await asyncio.sleep(e.retry_after)
+                await self.bot.edit_message_text(
+                    chat_id=job.chat_id, 
+                    message_id=tracker_id, 
+                    text=text, 
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+                return  # نجح التحديث، اخرج من الدالة
             except BadRequest as e:
-                if "message is not modified" not in str(e).lower():
-                    logger.warning(f"Failed to update tracker: {e}")
-                break
+                err_str = str(e).lower()
+                if "message is not modified" in err_str:
+                    return  # المحتوى نفسه، لا داعي لفعل شيء
+                
+                if "message to edit not found" in err_str or "message can't be edited" in err_str:
+                    # الرسالة الشبح! قم بمسحها وإنشاء رسالة جديدة
+                    logger.warning(f"Ghost tracker detected (ID: {tracker_id}). Recreating tracker message...")
+                    await self.batch_manager.set_tracker(job.user_id, None)
+                    tracker_id = None  # السماح بالسقوط في كتلة الإنشاء بالأسفل
+                else:
+                    logger.warning(f"Unhandled BadRequest during tracker edit: {e}")
+                    return  # خطأ آخر، تجنب الدخول في حلقة لا نهائية
+            except RetryAfter as e:
+                await asyncio.sleep(e.retry_after)
+                try:
+                    await self.bot.edit_message_text(chat_id=job.chat_id, message_id=tracker_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+                except Exception as retry_err:
+                    logger.warning(f"Failed to edit tracker after RetryAfter: {retry_err}")
+                return
             except Exception as e:
-                logger.warning(f"Failed to update session tracker: {e}")
-                break
+                logger.error(f"Unexpected error editing tracker: {e}")
+                return
+                
+        # إنشاء رسالة تتبع جديدة إذا لم تكن موجودة أو تم مسحها (التعافي الذاتي)
+        if not tracker_id:
+            try:
+                msg = await self.bot.send_message(
+                    chat_id=job.chat_id, 
+                    text=text, 
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+                await self.batch_manager.set_tracker(job.user_id, msg.message_id)
+            except Exception as e:
+                logger.error(f"Failed to create new tracker: {e}")
 
     async def compile_and_send(self, user_id: int, chat_id: int) -> None:
         session_data = await self.batch_manager.get_session_data(user_id)

@@ -23,7 +23,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user = update.effective_user
     chat_id = update.effective_chat.id
     
-    # --- الحصار الأمني: رفض الصور أثناء التجميع النهائي ---
     if await batch_manager.is_finalizing(user.id):
         try:
             await update.message.delete()
@@ -81,6 +80,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         translated_count = len(await batch_manager.get_session_data(user.id))
         
         # إذا كان الطابور فارغاً قبل وصول هذه الصورة، فهذا يعني بداية دفعة جديدة
+        # نقوم بمسح رسالة الـ Tracker القديمة (إن وجدت) لتنظيف الشات
         if queue_size_before == 0 and tracker_id:
             try: 
                 await context.bot.delete_message(chat_id=chat_id, message_id=tracker_id)
@@ -104,6 +104,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             except Exception: pass
         else:
             # للصور التالية في نفس الدفعة: فقط مؤشر الكتابة لإبقاء المستخدم مطمئناً دون لمس الرسالة
+            # الـ SessionSender سيتولى تحديث العداد لحظياً أثناء المعالجة
             try: await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
             except: pass
     else:
