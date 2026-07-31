@@ -108,9 +108,15 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 f"• الصور في الطابور: `{current_queue}`\n\n"
                 f"_يرجى الانتظار، جاري المعالجة..._"
             )
-            try:
-                await context.bot.edit_message_text(chat_id=chat_id, message_id=tracker_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-            except Exception: pass 
+            # --- آلية إعادة المحاولة الذكية لتجاوز قيود تيليجرام ---
+            for attempt in range(3):
+                try:
+                    await context.bot.edit_message_text(chat_id=chat_id, message_id=tracker_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+                    break
+                except RetryAfter as e:
+                    await asyncio.sleep(e.retry_after)
+                except Exception:
+                    break
     else:
         user_settings = await settings_manager.get_user_settings(user.id)
         output_method = user_settings.get("output_method", "files_only")

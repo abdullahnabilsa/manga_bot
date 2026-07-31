@@ -75,17 +75,25 @@ class SessionSender:
                 f"_يمكنك متابعة الإرسال، أو اضغط 🔴 إنهاء الجلسة لتجميع الملفات\\._"
             )
             
-        try:
-            if tracker_id:
-                await self.bot.edit_message_text(chat_id=job.chat_id, message_id=tracker_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-            else:
-                msg = await self.bot.send_message(chat_id=job.chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-                await self.batch_manager.set_tracker(job.user_id, msg.message_id)
-        except BadRequest as e:
-            if "message is not modified" not in str(e).lower():
-                logger.warning(f"Failed to update tracker: {e}")
-        except Exception as e:
-            logger.warning(f"Failed to update session tracker: {e}")
+        # --- آلية إعادة المحاولة الذكية لتجاوز قيود تيليجرام ---
+        for attempt in range(3):
+            try:
+                if tracker_id:
+                    await self.bot.edit_message_text(chat_id=job.chat_id, message_id=tracker_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+                else:
+                    msg = await self.bot.send_message(chat_id=job.chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+                    await self.batch_manager.set_tracker(job.user_id, msg.message_id)
+                break # نجح التحديث، اخرج من حلقة المحاولة
+            except RetryAfter as e:
+                logger.warning(f"Rate limited while updating tracker. Sleeping for {e.retry_after}s...")
+                await asyncio.sleep(e.retry_after)
+            except BadRequest as e:
+                if "message is not modified" not in str(e).lower():
+                    logger.warning(f"Failed to update tracker: {e}")
+                break
+            except Exception as e:
+                logger.warning(f"Failed to update session tracker: {e}")
+                break
 
     async def compile_and_send(self, user_id: int, chat_id: int) -> None:
         """وظيفة موحدة لتجميع البيانات وإرسالها بناءً على إعدادات المستخدم واسم الملف المخصص."""
