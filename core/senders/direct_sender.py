@@ -37,40 +37,50 @@ class DirectSender:
         # 2. توليد وإرسال الملفات إذا كان الإخراج يشمل ذلك
         if output_method in ["files_only", "messages_and_files"]:
             # التسليم الصامت: لا نرسل رسالة "جاري الرفع"، المؤشر الصامت يكفي.
-            file_io_txt = handler.generate_txt([job.page_data]) if fmt in ["txt", "both"] else None
-            file_io_docx = handler.generate_docx([job.page_data]) if fmt in ["docx", "both"] else None
-            
-            sent_successfully = True
-            caption_text = f"📄 ترجمة: {escape_markdown_v2(job.file_name)}"
+            file_io_txt = None
+            file_io_docx = None
+            base_filename = job.file_name.split('.')[0] if job.file_name else "translation"
             
             try:
-                if file_io_txt:
-                    await self.bot.send_document(
-                        chat_id=job.chat_id, 
-                        document=InputFile(file_io_txt, filename=f"{job.file_name.split('.')[0]}_translation.txt"),
-                        caption=caption_text, parse_mode=ParseMode.MARKDOWN_V2, reply_to_message_id=job.photo_message_id
-                    )
-                    await asyncio.sleep(0.3)
-                if file_io_docx:
-                    await self.bot.send_document(
-                        chat_id=job.chat_id, 
-                        document=InputFile(file_io_docx, filename=f"{job.file_name.split('.')[0]}_translation.docx"),
-                        caption=caption_text, parse_mode=ParseMode.MARKDOWN_V2, reply_to_message_id=job.photo_message_id
-                    )
-            except RetryAfter as e:
-                await asyncio.sleep(e.retry_after)
+                if fmt in ["txt", "both"]:
+                    # تفويغ المهمة المتزامنة إلى Thread منفصل لعدم حظر الـ Event Loop
+                    file_io_txt = await asyncio.to_thread(handler.generate_txt, [job.page_data])
+                if fmt in ["docx", "both"]:
+                    # تفويغ المهمة المتزامنة إلى Thread منفصل لعدم حظر الـ Event Loop
+                    file_io_docx = await asyncio.to_thread(handler.generate_docx, [job.page_data])
+                    
+                caption_text = f"📄 ترجمة: {escape_markdown_v2(job.file_name)}"
+                
                 try:
                     if file_io_txt:
-                        await self.bot.send_document(chat_id=job.chat_id, document=InputFile(file_io_txt, filename=f"{job.file_name.split('.')[0]}_translation.txt"), caption=caption_text, parse_mode=ParseMode.MARKDOWN_V2, reply_to_message_id=job.photo_message_id)
+                        await self.bot.send_document(
+                            chat_id=job.chat_id, 
+                            document=InputFile(file_io_txt, filename=f"{base_filename}_translation.txt"),
+                            caption=caption_text, parse_mode=ParseMode.MARKDOWN_V2, reply_to_message_id=job.photo_message_id
+                        )
+                        await asyncio.sleep(0.3)
                     if file_io_docx:
-                        await self.bot.send_document(chat_id=job.chat_id, document=InputFile(file_io_docx, filename=f"{job.file_name.split('.')[0]}_translation.docx"), caption=caption_text, parse_mode=ParseMode.MARKDOWN_V2, reply_to_message_id=job.photo_message_id)
-                except Exception:
-                    sent_successfully = False
+                        await self.bot.send_document(
+                            chat_id=job.chat_id, 
+                            document=InputFile(file_io_docx, filename=f"{base_filename}_translation.docx"),
+                            caption=caption_text, parse_mode=ParseMode.MARKDOWN_V2, reply_to_message_id=job.photo_message_id
+                        )
+                except RetryAfter as e:
+                    await asyncio.sleep(e.retry_after)
+                    try:
+                        if file_io_txt:
+                            file_io_txt.seek(0) # إعادة المؤشر للبداية بعد الفشل
+                            await self.bot.send_document(chat_id=job.chat_id, document=InputFile(file_io_txt, filename=f"{base_filename}_translation.txt"), caption=caption_text, parse_mode=ParseMode.MARKDOWN_V2, reply_to_message_id=job.photo_message_id)
+                        if file_io_docx:
+                            file_io_docx.seek(0) # إعادة المؤشر للبداية بعد الفشل
+                            await self.bot.send_document(chat_id=job.chat_id, document=InputFile(file_io_docx, filename=f"{base_filename}_translation.docx"), caption=caption_text, parse_mode=ParseMode.MARKDOWN_V2, reply_to_message_id=job.photo_message_id)
+                    except Exception:
+                        logger.error(f"Failed to send document after RetryAfter")
+                except Exception as e:
+                    logger.error(f"Failed to send document: {e}")
+                    
             except Exception as e:
-                logger.error(f"Failed to send document: {e}")
-                sent_successfully = False
-                
-            if not sent_successfully:
+                logger.error(f"Failed to generate or send document: {e}")
                 text = f"❌ *فشل الإرسال\\.*\n🖼️ الملف: `{escape_markdown_v2(job.file_name)}`\nتعذر إرسال الملف\\. حاول مرة أخرى\\."
                 await self.pipeline.safe_edit_or_send(job, text)
                 return job # الخروج فوراً دون حذف رسالة الخطأ

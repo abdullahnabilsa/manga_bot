@@ -154,11 +154,24 @@ class SessionSender:
                             except Exception: pass
             else:
                 if fmt in ["txt", "both"]:
-                    file_io = handler.generate_txt(session_data)
-                    await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.txt"))
+                    # تفويغ المهمة المتزامنة إلى Thread منفصل لعدم حظر الـ Event Loop
+                    file_io = await asyncio.to_thread(handler.generate_txt, session_data)
+                    try:
+                        await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.txt"))
+                    except RetryAfter as e:
+                        await asyncio.sleep(e.retry_after)
+                        file_io.seek(0) # إعادة المؤشر للبداية بعد الفشل
+                        await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.txt"))
+
                 if fmt in ["docx", "both"]:
-                    file_io = handler.generate_docx(session_data)
-                    await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.docx"))
+                    # تفويغ المهمة المتزامنة إلى Thread منفصل لعدم حظر الـ Event Loop
+                    file_io = await asyncio.to_thread(handler.generate_docx, session_data)
+                    try:
+                        await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.docx"))
+                    except RetryAfter as e:
+                        await asyncio.sleep(e.retry_after)
+                        file_io.seek(0) # إعادة المؤشر للبداية بعد الفشل
+                        await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.docx"))
                     
             await self.bot.send_message(chat_id=chat_id, text="✅ *اكتملت الجلسة\\!*\nتم تجهيز الملفات وإرسالها بنجاح\\.", parse_mode=ParseMode.MARKDOWN_V2)
             
