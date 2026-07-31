@@ -58,6 +58,14 @@ class Database:
                 value TEXT
             )
         """)
+        # NEW: Concurrency Access Control Table
+        await self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS concurrency_access (
+                user_id INTEGER PRIMARY KEY,
+                access_type TEXT NOT NULL,
+                expires_at REAL
+            )
+        """)
         await self._conn.commit()
 
     async def execute(self, query: str, params: tuple = ()) -> None:

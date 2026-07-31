@@ -45,24 +45,16 @@ class BotErrorNotifier:
         try:
             if job.status_message_id:
                 await self._bot.edit_message_text(
-                    chat_id=job.chat_id,
-                    message_id=job.status_message_id,
-                    text=text,
-                    parse_mode=ParseMode.MARKDOWN_V2
+                    chat_id=job.chat_id, message_id=job.status_message_id,
+                    text=text, parse_mode=ParseMode.MARKDOWN_V2
                 )
             else:
-                await self._bot.send_message(
-                    chat_id=job.chat_id,
-                    text=text,
-                    parse_mode=ParseMode.MARKDOWN_V2
-                )
+                await self._bot.send_message(chat_id=job.chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
         except Exception as e:
             logger.error(f"Failed to send error notification: {e}")
 
 class BotPipeline:
-    """Main Pipeline Router: Orchestrates processing, rendering, and delegates sending."""
-    
-    def __init__(self, bot, settings_manager, batch_manager, persona_registry, ai_provider, telegram_renderer, api_key_manager, queue_manager):
+    def __init__(self, bot, settings_manager, batch_manager, persona_registry, ai_provider, telegram_renderer, api_key_manager, queue_manager, concurrency_manager):
         self.bot = bot
         self.settings_manager = settings_manager
         self.batch_manager = batch_manager
@@ -71,6 +63,7 @@ class BotPipeline:
         self.telegram_renderer = telegram_renderer
         self.api_key_manager = api_key_manager
         self.queue_manager = queue_manager
+        self.concurrency_manager = concurrency_manager  # <--- جديد
         self.bot_context = _BotContextWrapper(bot)
         self._settings = Settings()
         
@@ -78,17 +71,14 @@ class BotPipeline:
         self.session_sender = SessionSender(self)
 
     async def safe_edit_or_send(self, job: PageJob, text: str) -> None:
-        """تعدل الرسالة، وإذا فشل التعديل (لأنها حُذفت)، ينشئ رسالة جديدة ويربطها بالـ Job."""
         try:
             if job.status_message_id:
                 await self.bot.edit_message_text(chat_id=job.chat_id, message_id=job.status_message_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
             else:
-                raise BadRequest("No status message ID")  # إجبار الإنشاء الجديد
+                raise BadRequest("No status message ID")
         except (RetryAfter, BadRequest, Exception) as e:
             if isinstance(e, RetryAfter):
                 await asyncio.sleep(e.retry_after)
-            
-            # محاولة إنشاء رسالة جديدة إذا فشل التعديل
             try:
                 msg = await self.bot.send_message(chat_id=job.chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
                 job.status_message_id = msg.message_id

@@ -8,6 +8,7 @@ from typing import Callable, Awaitable, Dict, List, Optional
 from uuid import UUID
 
 from core.queue_manager import AsyncSingleWorkerQueue
+from core.concurrency.manager import ConcurrencyManager
 from utils.logger import job_logger
 from models.page_job import PageJob, JobState
 
@@ -15,11 +16,12 @@ logger = logging.getLogger(__name__)
 
 class JobSubmissionResult(Enum):
     SUCCESS = 1
-    QUEUE_FULL = 2  # <--- تم إزالة USER_LIMIT_REACHED
+    QUEUE_FULL = 2
 
 class JobManager:
-    def __init__(self, queue_manager: AsyncSingleWorkerQueue, max_running_jobs: int = 1, post_job_delay: int = 0) -> None:
+    def __init__(self, queue_manager: AsyncSingleWorkerQueue, concurrency_manager: ConcurrencyManager, max_running_jobs: int = 1, post_job_delay: int = 0) -> None:
         self._queue = queue_manager
+        self._concurrency_manager = concurrency_manager
         self._registry: Dict[UUID, PageJob] = {}
         self._lock = asyncio.Lock()
         self._worker_tasks: List[asyncio.Task] = []
@@ -48,7 +50,6 @@ class JobManager:
         async with self._lock:
             if self._queue.is_full():
                 return JobSubmissionResult.QUEUE_FULL
-
             self._registry[job.job_id] = job
         
         job_logger.log_received(job.job_id, job.user_id)
@@ -95,6 +96,10 @@ class JobManager:
             job_logger.log_started(job_id)
             
             try:
+                # --- CONCURRENCY CONTROL ---
+                # Wait for permission to process (blocks if user is sequential and another worker is busy)
+                await self._concurrency_manager.acquire_processing_slot(job.user_id)
+                
                 await self._transition_state(job, JobState.PROCESSING)
                 job = await self._processing_step(job)
 
@@ -108,13 +113,11 @@ class JobManager:
                 
                 scene_count = len(job.page_data.scenes) if job.page_data else 0
                 element_count = sum(len(s.elements) for s in job.page_data.scenes) if job.page_data else 0
-                
                 job_logger.log_completed(job_id, scene_count, element_count)
 
             except Exception as e:
                 job_logger.log_error(job_id, e)
                 await self._transition_state(job, JobState.FAILED)
-                
                 if self._error_notifier:
                     try:
                         await self._error_notifier(job, e)
@@ -122,9 +125,11 @@ class JobManager:
                         logger.error(f"Failed to send error notification: {notify_err}")
 
             finally:
+                # --- RELEASE CONCURRENCY SLOT ---
+                await self._concurrency_manager.release_processing_slot(job.user_id)
                 await self._queue.task_done()
                 async with self._lock:
-                    self._registry.pop(job.job_id, None) # <--- تنظيف الذاكرة بعد الانتهاء
+                    self._registry.pop(job.job_id, None)
                 await asyncio.sleep(self.POST_JOB_DELAY_SECONDS)
 
     async def _transition_state(self, job: PageJob, new_state: JobState) -> None:

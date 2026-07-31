@@ -13,13 +13,12 @@ from models.page_job import PageJob
 logger = logging.getLogger("manga_bot.session_sender")
 
 class SessionSender:
-    """Handles buffering pages and triggering deferred compilation with advanced UX tracking."""
-    
     def __init__(self, pipeline):
         self.pipeline = pipeline
         self.bot = pipeline.bot
         self.batch_manager = pipeline.batch_manager
         self.settings_manager = pipeline.settings_manager
+        self.concurrency_manager = pipeline.concurrency_manager  # <--- جديد
 
     async def process(self, job: PageJob, handler) -> PageJob:
         is_active = await self.batch_manager.is_session_active(job.user_id)
@@ -28,104 +27,87 @@ class SessionSender:
             return job
 
         total_pages = await self.batch_manager.add_page_data(job.user_id, job.page_data)
-        logger.info(f"JobID={job.job_id} | Added to session buffer. Total pages: {total_pages}")
         
         is_pending = await self.batch_manager.is_pending_compile(job.user_id)
         queue_size = await self.pipeline.queue_manager.size()
         
-        # --- التحديث اللحظي بعد كل صورة (Real-time Update) ---
         await self._update_session_tracker(job, total_pages, queue_size, is_pending)
         
         if is_pending and queue_size == 0:
-            logger.info(f"JobID={job.job_id} | Queue empty, triggering deferred compile.")
             await self.compile_and_send(job.user_id, job.chat_id)
             
         return job
 
     async def _update_session_tracker(self, job: PageJob, total_pages: int, queue_size: int, is_pending: bool) -> None:
-        tracker_id = await self.batch_manager.get_tracker(job.user_id)
-        session_data = await self.batch_manager.get_session_data(job.user_id)
-        
-        file_names = [escape_markdown_v2(pd.file_name) for pd in session_data if pd and pd.file_name]
-        
-        # --- تعديل الاختصار لـ 25 صورة، وعرض آخر 10 ---
-        if len(file_names) > 25:
-            start_index = len(file_names) - 10
-            files_text = "_\\.\\.\\. عرض آخر 10 صور_\n" + "\n".join(
-                [f"{i}\\. `{name}`" for i, name in enumerate(file_names[-10:], start=start_index + 1)]
-            )
-        else:
-            files_text = "\n".join([f"{i}\\. `{name}`" for i, name in enumerate(file_names, start=1)])
-        
-        if is_pending:
-            if queue_size > 0:
-                text = (
-                    f"⏳ *معالجة الصور المتبقية للجلسة...*\n\n"
-                    f"✅ تمت معالجة `{total_pages}` صورة بنجاح\\.\n"
-                    f"📦 يتبقى `{queue_size}` صورة في الطابور\\.\n\n"
-                    f"📄 *الصور المجهزة:*\n{files_text}\n\n"
-                    f"_تم استلام اسم الملف\\. جاري معالجة الباقي تلقائياً، يرجى الانتظار..._"
+        # --- CONCURRENCY CONTROL: Prevent Tracker Race Conditions ---
+        await self.concurrency_manager.acquire_tracker_lock(job.user_id)
+        try:
+            tracker_id = await self.batch_manager.get_tracker(job.user_id)
+            session_data = await self.batch_manager.get_session_data(job.user_id)
+            
+            file_names = [escape_markdown_v2(pd.file_name) for pd in session_data if pd and pd.file_name]
+            
+            if len(file_names) > 25:
+                start_index = len(file_names) - 10
+                files_text = "_\\.\\.\\. عرض آخر 10 صور_\n" + "\n".join(
+                    [f"{i}\\. `{name}`" for i, name in enumerate(file_names[-10:], start=start_index + 1)]
                 )
             else:
-                text = "📦 *اكتملت معالجة جميع الصور\\!*\nجاري تجميع الملفات النهائية وإرسالها\\.\\.\\."
-        else:
-            text = (
-                f"✅ *تمت معالجة الصور بنجاح وتخزينها في الجلسة\\.*\n\n"
-                f"📊 *إحصائيات الجلسة الحالية:*\n"
-                f"• الصور المترجمة: `{total_pages}`\n"
-                f"• الصور في الطابور: `{queue_size}`\n\n"
-                f"📄 *الصور المجهزة:*\n{files_text}\n\n"
-                f"_يمكنك متابعة الإرسال، أو اضغط 🔴 إنهاء الجلسة لتجميع الملفات\\._"
-            )
+                files_text = "\n".join([f"{i}\\. `{name}`" for i, name in enumerate(file_names, start=1)])
             
-        # --- آلية التعافي الذاتي (Self-Healing) ---
-        if tracker_id:
-            try:
-                await self.bot.edit_message_text(
-                    chat_id=job.chat_id, 
-                    message_id=tracker_id, 
-                    text=text, 
-                    parse_mode=ParseMode.MARKDOWN_V2
-                )
-                return  # نجح التحديث
-            except BadRequest as e:
-                err_str = str(e).lower()
-                if "message is not modified" in err_str:
-                    return  # المحتوى نفسه
-                if "message to edit not found" in err_str or "message can't be edited" in err_str:
-                    logger.warning(f"Ghost tracker detected (ID: {tracker_id}). Recreating tracker message...")
-                    await self.batch_manager.set_tracker(job.user_id, None)
-                    tracker_id = None
+            if is_pending:
+                if queue_size > 0:
+                    text = (
+                        f"⏳ *معالجة الصور المتبقية للجلسة...*\n\n"
+                        f"✅ تمت معالجة `{total_pages}` صورة بنجاح\\.\n"
+                        f"📦 يتبقى `{queue_size}` صورة في الطابور\\.\n\n"
+                        f"📄 *الصور المجهزة:*\n{files_text}\n\n"
+                        f"_تم استلام اسم الملف\\. جاري معالجة الباقي تلقائياً، يرجى الانتظار..._"
+                    )
                 else:
-                    logger.warning(f"Unhandled BadRequest during tracker edit: {e}")
-                    return
-            except RetryAfter as e:
-                await asyncio.sleep(e.retry_after)
+                    text = "📦 *اكتملت معالجة جميع الصور\\!*\nجاري تجميع الملفات النهائية وإرسالها\\.\\.\\."
+            else:
+                text = (
+                    f"✅ *تمت معالجة الصور بنجاح وتخزينها في الجلسة\\.*\n\n"
+                    f"📊 *إحصائيات الجلسة الحالية:*\n"
+                    f"• الصور المترجمة: `{total_pages}`\n"
+                    f"• الصور في الطابور: `{queue_size}`\n\n"
+                    f"📄 *الصور المجهزة:*\n{files_text}\n\n"
+                    f"_يمكنك متابعة الإرسال، أو اضغط 🔴 إنهاء الجلسة لتجميع الملفات\\._"
+                )
+                
+            if tracker_id:
                 try:
                     await self.bot.edit_message_text(chat_id=job.chat_id, message_id=tracker_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
-                except Exception as retry_err:
-                    logger.warning(f"Failed to edit tracker after RetryAfter: {retry_err}")
-                return
-            except Exception as e:
-                logger.error(f"Unexpected error editing tracker: {e}")
-                return
+                    return
+                except BadRequest as e:
+                    err_str = str(e).lower()
+                    if "message is not modified" in err_str: return
+                    if "message to edit not found" in err_str or "message can't be edited" in err_str:
+                        await self.batch_manager.set_tracker(job.user_id, None)
+                        tracker_id = None
+                    else: return
+                except RetryAfter as e:
+                    await asyncio.sleep(e.retry_after)
+                    try:
+                        await self.bot.edit_message_text(chat_id=job.chat_id, message_id=tracker_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+                    except Exception: pass
+                    return
+                except Exception: return
                 
-        # إنشاء رسالة تتبع جديدة إذا لم تكن موجودة (التعافي الذاتي)
-        if not tracker_id:
-            try:
-                msg = await self.bot.send_message(
-                    chat_id=job.chat_id, 
-                    text=text, 
-                    parse_mode=ParseMode.MARKDOWN_V2
-                )
-                await self.batch_manager.set_tracker(job.user_id, msg.message_id)
-            except Exception as e:
-                logger.error(f"Failed to create new tracker: {e}")
+            if not tracker_id:
+                try:
+                    msg = await self.bot.send_message(chat_id=job.chat_id, text=text, parse_mode=ParseMode.MARKDOWN_V2)
+                    await self.batch_manager.set_tracker(job.user_id, msg.message_id)
+                except Exception as e:
+                    logger.error(f"Failed to create new tracker: {e}")
+        finally:
+            await self.concurrency_manager.release_tracker_lock(job.user_id)
+        # -----------------------------------------------------------
 
     async def compile_and_send(self, user_id: int, chat_id: int) -> None:
         session_data = await self.batch_manager.get_session_data(user_id)
-        if not session_data:
-            return
+        if not session_data: return
 
         custom_name = await self.batch_manager.get_custom_filename(user_id)
         base_filename = custom_name if custom_name else "manga_session"
@@ -153,34 +135,36 @@ class SessionSender:
                             try: await self.bot.send_message(chat_id=chat_id, text=msg_text, parse_mode=ParseMode.MARKDOWN_V2, disable_web_page_preview=True)
                             except Exception: pass
             else:
-                if fmt in ["txt", "both"]:
-                    # تفويغ المهمة المتزامنة إلى Thread منفصل لعدم حظر الـ Event Loop
-                    file_io = await asyncio.to_thread(handler.generate_txt, session_data)
-                    try:
-                        await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.txt"))
-                    except RetryAfter as e:
-                        await asyncio.sleep(e.retry_after)
-                        file_io.seek(0) # إعادة المؤشر للبداية بعد الفشل
-                        await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.txt"))
+                # --- CONCURRENCY CONTROL: Prevent Telegram Rate Limits ---
+                await self.concurrency_manager.acquire_chat_send_lock(chat_id)
+                try:
+                    if fmt in ["txt", "both"]:
+                        file_io = await asyncio.to_thread(handler.generate_txt, session_data)
+                        try:
+                            await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.txt"))
+                        except RetryAfter as e:
+                            await asyncio.sleep(e.retry_after)
+                            file_io.seek(0)
+                            await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.txt"))
 
-                if fmt in ["docx", "both"]:
-                    # تفويغ المهمة المتزامنة إلى Thread منفصل لعدم حظر الـ Event Loop
-                    file_io = await asyncio.to_thread(handler.generate_docx, session_data)
-                    try:
-                        await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.docx"))
-                    except RetryAfter as e:
-                        await asyncio.sleep(e.retry_after)
-                        file_io.seek(0) # إعادة المؤشر للبداية بعد الفشل
-                        await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.docx"))
+                    if fmt in ["docx", "both"]:
+                        file_io = await asyncio.to_thread(handler.generate_docx, session_data)
+                        try:
+                            await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.docx"))
+                        except RetryAfter as e:
+                            await asyncio.sleep(e.retry_after)
+                            file_io.seek(0)
+                            await self.bot.send_document(chat_id=chat_id, document=InputFile(file_io, filename=f"{base_filename}.docx"))
+                finally:
+                    await self.concurrency_manager.release_chat_send_lock(chat_id)
+                # -----------------------------------------------------------
                     
             await self.bot.send_message(chat_id=chat_id, text="✅ *اكتملت الجلسة\\!*\nتم تجهيز الملفات وإرسالها بنجاح\\.", parse_mode=ParseMode.MARKDOWN_V2)
             
             prompt_msg_id = await self.batch_manager.get_prompt_message_id(user_id)
             if prompt_msg_id:
-                try:
-                    await self.bot.delete_message(chat_id=chat_id, message_id=prompt_msg_id)
-                except Exception as e:
-                    logger.warning(f"Failed to delete prompt message: {e}")
+                try: await self.bot.delete_message(chat_id=chat_id, message_id=prompt_msg_id)
+                except Exception: pass
                 
         except Exception as e:
             logger.error(f"Failed to process deferred compile: {e}")
