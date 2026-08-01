@@ -23,7 +23,7 @@ from core.access_manager import AccessManager
 from core.pipeline import BotPipeline
 from ai.gemini_provider import GeminiProvider
 from renderer.telegram_renderer import TelegramRenderer
-from core.concurrency import ConcurrencyDBStore, ConcurrencyManager  # <--- نظام التزامن
+from core.concurrency import ConcurrencyDBStore, ConcurrencyManager
 
 from handlers.ui.start import start_command, help_command
 from handlers.ui.settings import settings_command, settings_callback
@@ -33,7 +33,7 @@ from handlers.ui.access import (
     add_user_command, remove_user_command, add_admin_command, remove_admin_command, 
     list_users_command, open_requests_command, close_requests_command, handle_request_callback
 )
-from handlers.ui.concurrency import boost_command, set_limit_command, grant_parallel_command, revoke_parallel_command  # <--- أوامر التزامن
+from handlers.ui.concurrency import boost_command, set_limit_command, grant_parallel_command, revoke_parallel_command
 from handlers.messages import handle_image, handle_text
 from handlers.ui.session import receive_session_filename
 
@@ -85,8 +85,17 @@ async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE
             
             admins = await access_manager.get_admins()
             for admin_id in admins:
-                try: await context.bot.send_message(chat_id=int(admin_id), text=text_to_admins, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
-                except Exception as e: logger.warning(f"Could not send join request to admin {admin_id}: {e}")
+                try: 
+                    msg = await context.bot.send_message(
+                        chat_id=int(admin_id), 
+                        text=text_to_admins, 
+                        parse_mode=ParseMode.MARKDOWN_V2, 
+                        reply_markup=keyboard
+                    )
+                    # تتبع الرسالة المرسلة للمشرف لتحديثها لاحقاً
+                    await access_manager.track_request(user_id, int(admin_id), msg.message_id)
+                except Exception as e: 
+                    logger.warning(f"Could not send join request to admin {admin_id}: {e}")
     
     raise ApplicationHandlerStop
 
@@ -159,7 +168,6 @@ async def post_init(app: Application) -> None:
     concurrency_db_store = ConcurrencyDBStore(db=db)
     concurrency_manager = ConcurrencyManager(db_store=concurrency_db_store)
     
-    # Dynamically spawn workers based on the global limit (Default is 3 if not set)
     max_workers = await concurrency_manager.get_global_limit()
     job_manager = JobManager(
         queue_manager, 
@@ -168,7 +176,6 @@ async def post_init(app: Application) -> None:
         post_job_delay=settings.post_job_delay_seconds
     )
     
-    # <--- ربط المديرين معاً لتفعيل التوسع الديناميكي
     concurrency_manager.register_job_manager(job_manager)
     
     public_commands = [

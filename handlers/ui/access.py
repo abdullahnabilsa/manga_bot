@@ -93,7 +93,6 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     users = await access_manager.get_users()
     admins = await access_manager.get_admins()
-    # تم إصلاح الخطأ هنا: استخدام القائمة _super_admin_ids بدلاً من المتغير المفرد
     super_admin_ids = access_manager._super_admin_ids
     join_status = "مفتوح 🟢" if await access_manager.is_join_requests_open() else "مغلق 🔴"
     
@@ -138,23 +137,71 @@ async def handle_request_callback(update: Update, context: ContextTypes.DEFAULT_
     await query.answer()
     access_manager = context.bot_data["access_manager"]
     
-    if not await access_manager.is_admin(query.from_user.id):
-        return
-        
     data = query.data
     action, user_id_str = data.split(":")
     user_id = int(user_id_str)
-    
     admin_name = escape_markdown_v2(query.from_user.first_name or "مشرف")
+    escaped_user_id = escape_markdown_v2(user_id_str)
     
+    # 1. التحقق مما إذا تمت معالجة الطلب مسبقاً
+    pending_requests = await access_manager.get_pending_requests(user_id)
+    if not pending_requests:
+        await query.answer("تمت معالجة هذا الطلب مسبقاً.", show_alert=True)
+        try:
+            await query.edit_message_text(f"ℹ️ *تمت معالجة هذا الطلب مسبقاً\\.*\nالمستخدم `{escaped_user_id}` تمت إضافته أو رفضه\\.", parse_mode=ParseMode.MARKDOWN_V2)
+        except Exception:
+            pass
+        return
+
     if action == "accept_req":
+        # فحص مزدوج في قاعدة البيانات لتفادي السباقات (Race Conditions)
+        if await access_manager.is_authorized(user_id):
+            await query.answer("هذا المستخدم موجود بالفعل في البوت.", show_alert=True)
+            await access_manager.clear_requests(user_id)
+            return
+            
         await access_manager.add_user(user_id)
-        await query.edit_message_text(f"✅ *تم قبول الطلب\\.*\nتمت إضافة المستخدم `{escape_markdown_v2(user_id_str)}` بواسطة {admin_name}\\.", parse_mode=ParseMode.MARKDOWN_V2)
+        
+        new_text = f"✅ *تم قبول الطلب\\.*\nتمت إضافة المستخدم `{escaped_user_id}` بواسطة {admin_name}\\."
+        
+        # 2. تحديث جميع رسائل المشرفين لإظهار من قبل الطلب
+        for adm_id, msg_id in pending_requests:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=adm_id,
+                    message_id=msg_id,
+                    text=new_text,
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+            except Exception:
+                pass # تجاهل الأخطاء إذا تم حذف الرسالة أو تعذر تعديلها
+                
+        # 3. مسح التتبع وإرسال رسالة واحدة فقط للمستخدم
+        await access_manager.clear_requests(user_id)
         try:
             await context.bot.send_message(chat_id=user_id, text="🎉 *مبروك\\!*\nتم قبول طلب انضمامك\\. يمكنك الآن استخدام البوت بحرية\\.\nأرسل /start للبدء\\.", parse_mode=ParseMode.MARKDOWN_V2)
-        except Exception: pass
+        except Exception: 
+            pass
+
     elif action == "reject_req":
-        await query.edit_message_text(f"❌ *تم رفض الطلب\\.*\nتم رفض المستخدم `{escape_markdown_v2(user_id_str)}` بواسطة {admin_name}\\.", parse_mode=ParseMode.MARKDOWN_V2)
+        new_text = f"❌ *تم رفض الطلب\\.*\nتم رفض المستخدم `{escaped_user_id}` بواسطة {admin_name}\\."
+        
+        # تحديث جميع رسائل المشرفين
+        for adm_id, msg_id in pending_requests:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=adm_id,
+                    message_id=msg_id,
+                    text=new_text,
+                    parse_mode=ParseMode.MARKDOWN_V2
+                )
+            except Exception:
+                pass
+                
+        await access_manager.clear_requests(user_id)
+        
+        # إرسال رسالة رفض واحدة فقط للمستخدم
         try:
             await context.bot.send_message(chat_id=user_id, text="🚫 للأسف، تم رفض طلب انضمامك من قبل إدارة البوت\\.", parse_mode=ParseMode.MARKDOWN_V2)
-        except Exception: pass
+        except Exception: 
+            pass

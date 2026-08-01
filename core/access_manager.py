@@ -1,8 +1,9 @@
 # File: core/access_manager.py
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import List
+from typing import List, Dict, Tuple
 from core.database import Database
 
 logger = logging.getLogger(__name__)
@@ -12,8 +13,10 @@ class AccessManager:
     
     def __init__(self, db: Database, super_admin_ids: str = "") -> None:
         self._db = db
-        # تقسيم النص إلى قائمة IDs وتنظيف المسافات
         self._super_admin_ids = [uid.strip() for uid in super_admin_ids.split(",") if uid.strip()]
+        # In-memory tracking for pending join requests to update all admins
+        self._pending_requests: Dict[int, List[Tuple[int, int]]] = {} # user_id -> [(admin_id, msg_id)]
+        self._lock = asyncio.Lock()
 
     def is_super_admin(self, user_id: int) -> bool:
         return str(user_id) in self._super_admin_ids
@@ -65,10 +68,24 @@ class AccessManager:
     async def get_admins(self) -> List[str]:
         rows = await self._db.fetchall("SELECT user_id FROM users_access WHERE role = 'admin'")
         db_admins = [str(row[0]) for row in rows]
-        # دمج السوبر أدمنز مع أدمنز القاعدة وإزالة التكرار
         all_admins = list(set(self._super_admin_ids + db_admins))
         return all_admins
 
     async def get_users(self) -> List[str]:
         rows = await self._db.fetchall("SELECT user_id FROM users_access WHERE role = 'user'")
         return [str(row[0]) for row in rows]
+
+    # --- JOIN REQUEST TRACKING SYSTEM ---
+    async def track_request(self, user_id: int, admin_id: int, message_id: int) -> None:
+        async with self._lock:
+            if user_id not in self._pending_requests:
+                self._pending_requests[user_id] = []
+            self._pending_requests[user_id].append((admin_id, message_id))
+
+    async def get_pending_requests(self, user_id: int) -> List[Tuple[int, int]]:
+        async with self._lock:
+            return list(self._pending_requests.get(user_id, []))
+
+    async def clear_requests(self, user_id: int) -> None:
+        async with self._lock:
+            self._pending_requests.pop(user_id, None)
