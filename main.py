@@ -74,6 +74,17 @@ async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE
                 except Exception: pass
                 raise ApplicationHandlerStop
 
+            # --- حذف الطلب القديم لمنع ازدحام رسائل المشرفين ---
+            old_requests = await access_manager.get_pending_requests(user_id)
+            if old_requests:
+                for adm_id, msg_id in old_requests:
+                    try:
+                        await context.bot.delete_message(chat_id=adm_id, message_id=msg_id)
+                    except Exception:
+                        pass # تجاهل الخطأ إذا كانت الرسالة محذوفة بالفعل
+                await access_manager.clear_requests(user_id)
+            # ------------------------------------------------
+
             user = update.effective_user
             try:
                 await context.bot.send_message(chat_id=user_id, text="⏳ *تم استلام طلبك للانضمام إلى البوت\\.*\nسيقوم المشرفون بمراجعة طلبك\\. ستصلك رسالة فور الموافقة\\.", parse_mode=ParseMode.MARKDOWN_V2)
