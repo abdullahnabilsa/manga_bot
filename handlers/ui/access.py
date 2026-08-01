@@ -140,10 +140,17 @@ async def handle_request_callback(update: Update, context: ContextTypes.DEFAULT_
     data = query.data
     action, user_id_str = data.split(":")
     user_id = int(user_id_str)
+    
+    # استخراج اسم المشرف الذي قام بالعملية
     admin_name = escape_markdown_v2(query.from_user.first_name or "مشرف")
+    if query.from_user.username:
+        admin_mention = f"@{escape_markdown_v2(query.from_user.username)}"
+    else:
+        admin_mention = f"[{admin_name}](tg://user?id={query.from_user.id})"
+
     escaped_user_id = escape_markdown_v2(user_id_str)
     
-    # 1. التحقق مما إذا تمت معالجة الطلب مسبقاً
+    # التحقق مما إذا تمت معالجة الطلب مسبقاً
     pending_requests = await access_manager.get_pending_requests(user_id)
     if not pending_requests:
         await query.answer("تمت معالجة هذا الطلب مسبقاً.", show_alert=True)
@@ -153,8 +160,20 @@ async def handle_request_callback(update: Update, context: ContextTypes.DEFAULT_
             pass
         return
 
+    # محاولة جلب بيانات المستخدم لعرضها بشكل احترافي
+    user_display = f"`{escaped_user_id}`"
+    try:
+        user_chat = await context.bot.get_chat(user_id)
+        if user_chat.username:
+            user_display = f"@{escape_markdown_v2(user_chat.username)} \\(`{escaped_user_id}`\\)"
+        else:
+            escaped_first_name = escape_markdown_v2(user_chat.first_name or "N/A")
+            user_display = f"{escaped_first_name} \\(`{escaped_user_id}`\\)"
+    except Exception:
+        pass # في حال أغلق المستخدم حسابه أو حظر البوت
+
     if action == "accept_req":
-        # فحص مزدوج في قاعدة البيانات لتفادي السباقات (Race Conditions)
+        # فحص مزدوج في قاعدة البيانات لتفادي السباقات
         if await access_manager.is_authorized(user_id):
             await query.answer("هذا المستخدم موجود بالفعل في البوت.", show_alert=True)
             await access_manager.clear_requests(user_id)
@@ -162,9 +181,13 @@ async def handle_request_callback(update: Update, context: ContextTypes.DEFAULT_
             
         await access_manager.add_user(user_id)
         
-        new_text = f"✅ *تم قبول الطلب\\.*\nتمت إضافة المستخدم `{escaped_user_id}` بواسطة {admin_name}\\."
+        new_text = (
+            f"✅ *تم قبول الطلب\\!*\n\n"
+            f"👤 *المستخدم:* {user_display}\n"
+            f"👑 *بواسطة المشرف:* {admin_mention}"
+        )
         
-        # 2. تحديث جميع رسائل المشرفين لإظهار من قبل الطلب
+        # تحديث جميع رسائل المشرفين
         for adm_id, msg_id in pending_requests:
             try:
                 await context.bot.edit_message_text(
@@ -174,17 +197,27 @@ async def handle_request_callback(update: Update, context: ContextTypes.DEFAULT_
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
             except Exception:
-                pass # تجاهل الأخطاء إذا تم حذف الرسالة أو تعذر تعديلها
+                pass
                 
-        # 3. مسح التتبع وإرسال رسالة واحدة فقط للمستخدم
+        # مسح التتبع وإرسال رسالة واحدة فقط للمستخدم
         await access_manager.clear_requests(user_id)
         try:
-            await context.bot.send_message(chat_id=user_id, text="🎉 *مبروك\\!*\nتم قبول طلب انضمامك\\. يمكنك الآن استخدام البوت بحرية\\.\nأرسل /start للبدء\\.", parse_mode=ParseMode.MARKDOWN_V2)
+            user_msg = (
+                f"🎉 *مبروك\\! تم قبول طلب انضمامك\\.*\n\n"
+                f"👑 تمت الموافقة عليك بواسطة المشرف: {admin_mention}\n\n"
+                f"يمكنك الآن استخدام البوت بحرية\\.\n"
+                f"أرسل /start للبدء\\."
+            )
+            await context.bot.send_message(chat_id=user_id, text=user_msg, parse_mode=ParseMode.MARKDOWN_V2)
         except Exception: 
             pass
 
     elif action == "reject_req":
-        new_text = f"❌ *تم رفض الطلب\\.*\nتم رفض المستخدم `{escaped_user_id}` بواسطة {admin_name}\\."
+        new_text = (
+            f"❌ *تم رفض الطلب\\.*\n\n"
+            f"👤 *المستخدم:* {user_display}\n"
+            f"👑 *بواسطة المشرف:* {admin_mention}"
+        )
         
         # تحديث جميع رسائل المشرفين
         for adm_id, msg_id in pending_requests:
@@ -202,6 +235,10 @@ async def handle_request_callback(update: Update, context: ContextTypes.DEFAULT_
         
         # إرسال رسالة رفض واحدة فقط للمستخدم
         try:
-            await context.bot.send_message(chat_id=user_id, text="🚫 للأسف، تم رفض طلب انضمامك من قبل إدارة البوت\\.", parse_mode=ParseMode.MARKDOWN_V2)
+            user_msg = (
+                f"🚫 *تم رفض طلب الانضمام\\.*\n\n"
+                f"للأسف، تم رفض طلب انضمامك من قبل إدارة البوت\\."
+            )
+            await context.bot.send_message(chat_id=user_id, text=user_msg, parse_mode=ParseMode.MARKDOWN_V2)
         except Exception: 
             pass

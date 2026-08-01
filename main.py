@@ -67,6 +67,13 @@ async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if await access_manager.is_join_requests_open():
         if update.message and update.message.text and update.message.text.startswith("/start"):
+            # --- نظام التهدئة (Cooldown) لمنع الإزعاج ---
+            if await access_manager.is_on_cooldown(user_id):
+                try:
+                    await context.bot.send_message(chat_id=user_id, text="⏳ لقد أرسلت طلباً للتو\\.\nيرجى الانتظار دقيقة قبل المحاولة مرة أخرى\\.", parse_mode=ParseMode.MARKDOWN_V2)
+                except Exception: pass
+                raise ApplicationHandlerStop
+
             user = update.effective_user
             try:
                 await context.bot.send_message(chat_id=user_id, text="⏳ *تم استلام طلبك للانضمام إلى البوت\\.*\nسيقوم المشرفون بمراجعة طلبك\\. ستصلك رسالة فور الموافقة\\.", parse_mode=ParseMode.MARKDOWN_V2)
@@ -92,10 +99,12 @@ async def firewall_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE
                         parse_mode=ParseMode.MARKDOWN_V2, 
                         reply_markup=keyboard
                     )
-                    # تتبع الرسالة المرسلة للمشرف لتحديثها لاحقاً
                     await access_manager.track_request(user_id, int(admin_id), msg.message_id)
                 except Exception as e: 
                     logger.warning(f"Could not send join request to admin {admin_id}: {e}")
+            
+            # تحديث وقت الطلب ليبدأ العد التنازلي للتهدئة
+            await access_manager.update_cooldown(user_id)
     
     raise ApplicationHandlerStop
 

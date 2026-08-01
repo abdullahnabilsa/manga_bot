@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import List, Dict, Tuple
 from core.database import Database
 
@@ -16,6 +17,8 @@ class AccessManager:
         self._super_admin_ids = [uid.strip() for uid in super_admin_ids.split(",") if uid.strip()]
         # In-memory tracking for pending join requests to update all admins
         self._pending_requests: Dict[int, List[Tuple[int, int]]] = {} # user_id -> [(admin_id, msg_id)]
+        # Cooldown tracking to prevent spam (user_id -> timestamp)
+        self._request_cooldowns: Dict[int, float] = {}
         self._lock = asyncio.Lock()
 
     def is_super_admin(self, user_id: int) -> bool:
@@ -75,7 +78,18 @@ class AccessManager:
         rows = await self._db.fetchall("SELECT user_id FROM users_access WHERE role = 'user'")
         return [str(row[0]) for row in rows]
 
-    # --- JOIN REQUEST TRACKING SYSTEM ---
+    # --- JOIN REQUEST TRACKING & COOLDOWN SYSTEM ---
+    async def is_on_cooldown(self, user_id: int) -> bool:
+        async with self._lock:
+            last_request = self._request_cooldowns.get(user_id)
+            if last_request and (time.time() - last_request < 60):
+                return True
+            return False
+
+    async def update_cooldown(self, user_id: int) -> None:
+        async with self._lock:
+            self._request_cooldowns[user_id] = time.time()
+
     async def track_request(self, user_id: int, admin_id: int, message_id: int) -> None:
         async with self._lock:
             if user_id not in self._pending_requests:
